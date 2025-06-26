@@ -30,38 +30,26 @@
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
     
     <!-- Firebase SDK (Modular API) - Load all necessary Firebase functions directly -->
-    <!-- These scripts create a global 'firebase' object -->
+    <!-- These scripts create a global 'firebase' object (e.g., firebase.initializeApp, firebase.auth, firebase.firestore) -->
     <script src="https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js"></script>
     <script src="https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js"></script>
     <script src="https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js"></script>
 
-    <!-- Script to expose specific Firebase modular functions globally for Babel -->
-    <script type="module">
-      import { initializeApp, getApps, getApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
-      import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
-      import { getFirestore, collection, onSnapshot, addDoc, Timestamp, doc, updateDoc, query, where } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
-
-      // Expose these specific functions globally under a distinct namespace
-      window.dlvFirebase = { // Using a unique name 'dlvFirebase' to avoid conflicts
-        initializeApp, getApps, getApp,
-        getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged,
-        getFirestore, collection, onSnapshot, addDoc, Timestamp, doc, updateDoc, query, where
-      };
-    </script>
+    <!-- REMOVED: The previous <script type="module"> block that tried to expose imports globally.
+                 This caused the 'exports is not defined' and module syntax errors. -->
 </head>
 <body>
     <div id="root"></div>
     <div id="print-area" class="hidden"></div> <!-- Hidden by default, visible on print -->
 
     <script type="text/babel">
-        // FIX: Access Firebase functions from the custom global 'window.dlvFirebase' object.
-        // This avoids conflicts with how Babel standalone handles module scope.
+        // FIX: Access Firebase functions directly from the global 'firebase' object
+        // provided by the Firebase SDK CDN scripts loaded above.
+        // This avoids conflicts with Babel's in-browser transpilation of 'import'/'export'.
         const { useState, useEffect, createContext, useContext, Component } = React;
-        const {
-          initializeApp, getApps, getApp,
-          getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged,
-          getFirestore, collection, onSnapshot, addDoc, Timestamp, doc, updateDoc, query, where
-        } = window.dlvFirebase;
+        const { initializeApp, getApps, getApp } = firebase; // Core app functions
+        const { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } = firebase.auth; // Auth functions from firebase.auth
+        const { getFirestore, collection, onSnapshot, addDoc, Timestamp, doc, updateDoc, query, where } = firebase.firestore; // Firestore functions from firebase.firestore
 
 
 // --- Debugging Configuration ---

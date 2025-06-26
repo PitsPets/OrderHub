@@ -370,7 +370,6 @@ const App = () => {
           {!isAdminMode && !isWarehouseMode ? (
             <>
               {currentPage === 'inventory' && <ProductList setCurrentPage={setCurrentPage} />}
-              {/* FIX: Pass onOrderPlacedSuccess to Cart component */}
               {currentPage === 'cart' && <Cart onGoToInventory={() => setCurrentPage('inventory')} onOrderPlacedSuccess={() => setCurrentPage('orders')} />}
               {currentPage === 'orders' && <OrderHistory />}
             </>
@@ -1739,7 +1738,7 @@ const AdminDashboard = () => {
                 {order.items && order.items.length > 0 ? (
                   order.items.map((item, index) => (
                     <div key={index} className="flex justify-between items-center text-gray-700 text-md pl-4">
-                      <span>{item.name} {item.description ? `(${item.description})` : ''}</span> {/* FIX: Removed () if no description */}
+                      <span>{item.name} {item.description ? `(${item.description})` : ''}</span>
                       <span className={`font-semibold ${
                         item.status === 'Completed' ? 'text-green-600' :
                         item.status === 'Delayed' ? 'text-orange-600' :

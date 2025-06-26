@@ -29,24 +29,22 @@
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
     
-    <!-- Firebase SDK (Modular API) -->
-    <script type="module">
-        // Import Firebase functions directly and attach to window for access by Babel script
-        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
-        import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
-        import { getFirestore, collection, onSnapshot, addDoc, Timestamp, doc, updateDoc, query, where } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
-
-        window.firebase = { initializeApp, getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged, getFirestore, collection, onSnapshot, addDoc, Timestamp, doc, updateDoc, query, where };
-    </script>
+    <!-- Firebase SDK (Modular API) - Removed type="module" from here -->
+    <!-- The Firebase imports will now be handled directly within the type="text/babel" script -->
 </head>
 <body>
     <div id="root"></div>
     <div id="print-area" class="hidden"></div> <!-- Hidden by default, visible on print -->
 
     <script type="text/babel">
-        // Access Firebase functions from window, exposed by the type="module" script above
+        // FIX: Directly import Firebase functions here.
+        // This resolves the 'exports is not defined' error by letting Babel handle the imports directly.
+        // The CDN URLs are kept for direct browser loading.
         const { useState, useEffect, createContext, useContext, Component } = React;
-        const { initializeApp, getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged, getFirestore, collection, onSnapshot, addDoc, Timestamp, doc, updateDoc, query, where } = window.firebase;
+        const { initializeApp, getApps, getApp } = firebase; // getApps and getApp are still from global Firebase instance
+        const { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } = firebase;
+        const { getFirestore, collection, onSnapshot, addDoc, Timestamp, doc, updateDoc, query, where } = firebase;
+
 
 // --- Debugging Configuration ---
 // Set to 'true' to enable more console logging, or activate via localStorage.
@@ -487,7 +485,6 @@ const App = () => {
           {!isAdminMode && !isWarehouseMode ? (
             <ErrorBoundary> {/* Wrap primary content in ErrorBoundary */}
               {currentPage === 'inventory' && <ProductList setCurrentPage={setCurrentPage} />}
-              {/* FIX: Pass onOrderPlacedSuccess to Cart component */}
               {currentPage === 'cart' && <Cart onGoToInventory={() => setCurrentPage('inventory')} onOrderPlacedSuccess={() => setCurrentPage('orders')} />}
               {currentPage === 'orders' && <OrderHistory />}
             </ErrorBoundary>

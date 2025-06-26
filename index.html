@@ -29,11 +29,10 @@
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
     
-    <!-- FIX: Firebase SDK (Standard versions) - These create global 'firebase' object -->
-    <!-- Removed type="module" from these Firebase scripts -->
-    <script src="https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js"></script>
-    <script src="https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js"></script>
-    <script src="https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js"></script>
+    <!-- FIX: Firebase SDK (Compatibility versions) - These attach services directly to the global 'firebase' object -->
+    <script src="https://www.gstatic.com/firebasejs/11.6.1/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/11.6.1/firebase-auth-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore-compat.js"></script>
 
 </head>
 <body>
@@ -41,23 +40,23 @@
     <div id="print-area" class="hidden"></div> <!-- Hidden by default, visible on print -->
 
     <script type="text/babel">
-        // FIX: Access React components and Firebase functions from the global 'window' object
-        // The CDN scripts above make these available globally.
+        // FIX: Access Firebase functions and objects directly from the global 'firebase' object.
+        // The compatibility SDKs loaded above ensure these are available without 'import' statements.
         const { useState, useEffect, createContext, useContext, Component } = React;
 
-        // Access Firebase core functions directly from the global 'firebase' object
+        // Core Firebase app functions
         const initializeApp = firebase.initializeApp;
         const getApps = firebase.getApps;
-        const getApp = firebase.getApp; // getApp is fine as is, not causing the issue.
+        const getApp = firebase.getApp;
 
-        // Access Auth functions from firebase.auth namespace
-        const getAuth = firebase.auth; // This is a function, call it to get the auth instance: getAuth(app)
-        const signInAnonymously = firebase.auth.signInAnonymously;
-        const signInWithCustomToken = firebase.auth.signInWithCustomToken;
-        const onAuthStateChanged = firebase.auth.onAuthStateChanged;
+        // Auth functions
+        const getAuth = firebase.auth; // firebase.auth() returns the auth instance
+        const signInAnonymously = firebase.auth().signInAnonymously; // Call methods on the instance
+        const signInWithCustomToken = firebase.auth().signInWithCustomToken;
+        const onAuthStateChanged = firebase.auth().onAuthStateChanged;
 
-        // Access Firestore functions from firebase.firestore namespace
-        const getFirestore = firebase.firestore; // This is a function, call it to get the firestore instance: getFirestore(app)
+        // Firestore functions
+        const getFirestore = firebase.firestore; // firebase.firestore() returns the firestore instance
         const collection = firebase.firestore.collection;
         const onSnapshot = firebase.firestore.onSnapshot;
         const addDoc = firebase.firestore.addDoc;
@@ -199,8 +198,8 @@ const App = () => {
         }
       }
 
-      const firestoreOrders = getFirestore(ordersAppInstance); // Call getFirestore
-      const firebaseOrdersAuth = getAuth(ordersAppInstance); // Call getAuth
+      const firestoreOrders = getFirestore(ordersAppInstance);
+      const firebaseOrdersAuth = getAuth(ordersAppInstance);
       setOrdersDb(firestoreOrders);
       setOrdersAuth(firebaseOrdersAuth);
 
@@ -247,7 +246,7 @@ const App = () => {
           }
         }
 
-        const firestoreInventory = getFirestore(inventoryAppInstance); // Call getFirestore
+        const firestoreInventory = getFirestore(inventoryAppInstance);
         setInventoryDb(firestoreInventory);
 
         const WAREHOUSE_TRACKER_DATA_APP_ID = 'default-app-id';
@@ -781,7 +780,7 @@ const AdminInventoryItemForm = ({ item, onSave, onClose, showUserModal }) => {
   );
 };
 
-// Component for Special Orders (simplified into a text input)
+// Component for Special Orders
 const SpecialOrderForm = ({ onPlaceSpecialOrder, onClose, showUserModal, allSites }) => {
   const [specialOrderText, setSpecialOrderText] = useState('');
   const [selectedSite, setSelectedSite] = useState('');
@@ -1399,7 +1398,7 @@ const OrderHistory = () => {
   }
 
   return (
-    <div className="bg-white rounded-xl shadow-lg p-6 h-[calc(100vh-160px)] flex flex-col"> {/* Fixed height to prevent full screen scroll */}
+    <div className="bg-white rounded-xl shadow-lg p-6 h-[calc(100vh-160px)] flex flex-col">
       <h2 className="text-3xl font-bold text-gray-900 mb-6 text-center flex-shrink-0">Your Order History</h2>
 
       <div className="mb-6 flex-shrink-0">

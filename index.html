@@ -29,10 +29,10 @@
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
     
-    <!-- FIX: Firebase SDK (Compatibility versions) - These attach services directly to the global 'firebase' object -->
-    <script src="https://www.gstatic.com/firebasejs/11.6.1/firebase-app-compat.js"></script>
-    <script src="https://www.gstatic.com/firebasejs/11.6.1/firebase-auth-compat.js"></script>
-    <script src="https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore-compat.js"></script>
+    <!-- FIX: Firebase SDK (Standard versions) - These create global 'firebase' object -->
+    <script src="https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js"></script>
 
 </head>
 <body>
@@ -40,31 +40,9 @@
     <div id="print-area" class="hidden"></div> <!-- Hidden by default, visible on print -->
 
     <script type="text/babel">
-        // FIX: Access Firebase functions and objects directly from the global 'firebase' object.
-        // The compatibility SDKs loaded above ensure these are available without 'import' statements.
+        // FIX: Access Firebase functions directly from the global 'firebase' object.
+        // The CDN SDKs loaded above ensure these are available directly.
         const { useState, useEffect, createContext, useContext, Component } = React;
-
-        // Core Firebase app functions
-        const initializeApp = firebase.initializeApp;
-        const getApps = firebase.getApps;
-        const getApp = firebase.getApp;
-
-        // Auth functions
-        const getAuth = firebase.auth; // firebase.auth() returns the auth instance
-        const signInAnonymously = firebase.auth().signInAnonymously; // Call methods on the instance
-        const signInWithCustomToken = firebase.auth().signInWithCustomToken;
-        const onAuthStateChanged = firebase.auth().onAuthStateChanged;
-
-        // Firestore functions
-        const getFirestore = firebase.firestore; // firebase.firestore() returns the firestore instance
-        const collection = firebase.firestore.collection;
-        const onSnapshot = firebase.firestore.onSnapshot;
-        const addDoc = firebase.firestore.addDoc;
-        const Timestamp = firebase.firestore.Timestamp;
-        const doc = firebase.firestore.doc;
-        const updateDoc = firebase.firestore.updateDoc;
-        const query = firebase.firestore.query;
-        const where = firebase.firestore.where;
 
 
 // --- Debugging Configuration ---
@@ -186,11 +164,11 @@ const App = () => {
 
       let ordersAppInstance;
       try {
-        ordersAppInstance = initializeApp(ordersFirebaseConfig, 'ordersApp');
+        ordersAppInstance = firebase.initializeApp(ordersFirebaseConfig, 'ordersApp'); // FIX: Use firebase.initializeApp
       } catch (e) {
         if (e.code === 'app/duplicate-app') {
           logDebug("Orders Firebase App already initialized, getting existing instance.");
-          ordersAppInstance = getApp('ordersApp');
+          ordersAppInstance = firebase.getApp('ordersApp'); // FIX: Use firebase.getApp
         } else {
           console.error("Error initializing Orders Firebase App:", e);
           showUserModal(`Error initializing Orders DB: ${e.message}`);
@@ -198,18 +176,18 @@ const App = () => {
         }
       }
 
-      const firestoreOrders = getFirestore(ordersAppInstance);
-      const firebaseOrdersAuth = getAuth(ordersAppInstance);
+      const firestoreOrders = firebase.firestore(ordersAppInstance); // FIX: Use firebase.firestore
+      const firebaseOrdersAuth = firebase.auth(ordersAppInstance); // FIX: Use firebase.auth
       setOrdersDb(firestoreOrders);
       setOrdersAuth(firebaseOrdersAuth);
 
-      const unsubscribeAuth = onAuthStateChanged(firebaseOrdersAuth, async (user) => {
+      const unsubscribeAuth = firebase.auth().onAuthStateChanged(firebaseOrdersAuth, async (user) => { // FIX: Use firebase.auth().onAuthStateChanged
         if (user) {
           setUserId(user.uid);
           logDebug("Orders DB Auth: Authenticated user:", user.uid);
         } else {
           try {
-            await signInAnonymously(firebaseOrdersAuth);
+            await firebase.auth().signInAnonymously(firebaseOrdersAuth); // FIX: Use firebase.auth().signInAnonymously
             logDebug("Orders DB Auth: Signed in anonymously.");
           } catch (error) {
             console.error("Orders DB Auth error:", error);
@@ -234,11 +212,11 @@ const App = () => {
 
       if (EXISTING_FIREBASE_CONFIG.projectId && EXISTING_FIREBASE_CONFIG.apiKey !== "YOUR_EXISTING_DB_API_KEY") {
         try {
-          inventoryAppInstance = initializeApp(EXISTING_FIREBASE_CONFIG, 'inventoryApp');
+          inventoryAppInstance = firebase.initializeApp(EXISTING_FIREBASE_CONFIG, 'inventoryApp'); // FIX: Use firebase.initializeApp
         } catch (e) {
           if (e.code === 'app/duplicate-app') {
             logDebug("Inventory Firebase App already initialized, getting existing instance.");
-            inventoryAppInstance = getApp('inventoryApp');
+            inventoryAppInstance = firebase.getApp('inventoryApp'); // FIX: Use firebase.getApp
           } else {
             console.error("Error initializing Inventory Firebase App:", e);
             showUserModal(`Error initializing Inventory DB: ${e.message}`);
@@ -246,15 +224,15 @@ const App = () => {
           }
         }
 
-        const firestoreInventory = getFirestore(inventoryAppInstance);
+        const firestoreInventory = firebase.firestore(inventoryAppInstance); // FIX: Use firebase.firestore
         setInventoryDb(firestoreInventory);
 
         const WAREHOUSE_TRACKER_DATA_APP_ID = 'default-app-id';
 
-        const inventoryCollectionRef = collection(firestoreInventory, `artifacts/${WAREHOUSE_TRACKER_DATA_APP_ID}/public/data/inventory`);
-        const sitesCollectionRef = collection(firestoreInventory, `artifacts/${WAREHOUSE_TRACKER_DATA_APP_ID}/public/data/sites`);
+        const inventoryCollectionRef = firebase.firestore.collection(firestoreInventory, `artifacts/${WAREHOUSE_TRACKER_DATA_APP_ID}/public/data/inventory`); // FIX: Use firebase.firestore.collection
+        const sitesCollectionRef = firebase.firestore.collection(firestoreInventory, `artifacts/${WAREHOUSE_TRACKER_DATA_APP_ID}/public/data/sites`); // FIX: Use firebase.firestore.collection
 
-        unsubscribeInventory = onSnapshot(inventoryCollectionRef, (snapshot) => {
+        unsubscribeInventory = firebase.firestore.onSnapshot(inventoryCollectionRef, (snapshot) => { // FIX: Use firebase.firestore.onSnapshot
           try {
             const items = snapshot.docs.map(doc => ({
               id: doc.id,
@@ -271,7 +249,7 @@ const App = () => {
           showUserModal("Failed to connect to inventory updates. Please check your connection and Firebase rules for the existing database.");
         });
 
-        unsubscribeSites = onSnapshot(sitesCollectionRef, (snapshot) => {
+        unsubscribeSites = firebase.firestore.onSnapshot(sitesCollectionRef, (snapshot) => { // FIX: Use firebase.firestore.onSnapshot
           try {
             const sites = snapshot.docs.map(doc => doc.data().name).filter(Boolean);
             setAllSites(sites);
@@ -355,16 +333,16 @@ const App = () => {
     }
 
     const WAREHOUSE_TRACKER_DATA_APP_ID = 'default-app-id';
-    const inventoryCollectionRef = collection(inventoryDb, `artifacts/${WAREHOUSE_TRACKER_DATA_APP_ID}/public/data/inventory`);
+    const inventoryCollectionRef = firebase.firestore.collection(inventoryDb, `artifacts/${WAREHOUSE_TRACKER_DATA_APP_ID}/public/data/inventory`); // FIX: Use firebase.firestore.collection
 
     try {
       if (itemData.id) {
         const { id, ...dataToUpdate } = itemData;
-        await updateDoc(doc(inventoryCollectionRef, id), dataToUpdate);
+        await firebase.firestore.updateDoc(firebase.firestore.doc(inventoryCollectionRef, id), dataToUpdate); // FIX: Use firebase.firestore.updateDoc, firebase.firestore.doc
         logDebug('Item updated successfully in warehouse tracker!', itemData);
         showUserModal('Item updated successfully in warehouse tracker!');
       } else {
-        await addDoc(inventoryCollectionRef, itemData);
+        await firebase.firestore.addDoc(inventoryCollectionRef, itemData); // FIX: Use firebase.firestore.addDoc
         logDebug('New item added to warehouse tracker!', itemData);
         showUserModal('New item added to warehouse tracker!');
       }
@@ -384,13 +362,13 @@ const App = () => {
 
     try {
       const ordersAppIdForPath = ordersDb.app.options.projectId;
-      const ordersCollectionRef = collection(ordersDb, `artifacts/${ordersAppIdForPath}/orders`);
-      await addDoc(ordersCollectionRef, {
+      const ordersCollectionRef = firebase.firestore.collection(ordersDb, `artifacts/${ordersAppIdForPath}/orders`); // FIX: Use firebase.firestore.collection
+      await firebase.firestore.addDoc(ordersCollectionRef, { // FIX: Use firebase.firestore.addDoc
         userId: userId,
         userName: userName,
         site: orderData.site,
         items: orderData.items,
-        timestamp: Timestamp.now(),
+        timestamp: firebase.firestore.Timestamp.now(), // FIX: Use firebase.firestore.Timestamp
         status: 'Pending',
         needsFollowUp: false,
         lastFollowUpDate: null,
@@ -1398,7 +1376,7 @@ const OrderHistory = () => {
   }
 
   return (
-    <div className="bg-white rounded-xl shadow-lg p-6 h-[calc(100vh-160px)] flex flex-col">
+    <div className="bg-white rounded-xl shadow-lg p-6 h-[calc(100vh-160px)] flex flex-col"> {/* Fixed height to prevent full screen scroll */}
       <h2 className="text-3xl font-bold text-gray-900 mb-6 text-center flex-shrink-0">Your Order History</h2>
 
       <div className="mb-6 flex-shrink-0">

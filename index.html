@@ -1,7 +1,114 @@
-import React, { useState, useEffect, createContext, useContext } from 'react';
-import { initializeApp, getApps, getApp } from 'firebase/app';
-import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from 'firebase/auth';
-import { getFirestore, collection, onSnapshot, addDoc, Timestamp, doc, updateDoc, query, where } from 'firebase/firestore';
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>DLV Order Hub</title>
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Google Fonts: Inter (or Poppins if preferred) -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+      body {
+        font-family: 'Inter', sans-serif;
+      }
+      /* Custom styles for animations, modals, and print */
+      @keyframes scale-in{from{opacity:0;transform:scale(.95)}to{opacity:1;transform:scale(1)}}
+      .animate-scale-in{animation:scale-in .2s ease-out forwards}
+
+      /* Styles for print output */
+      @media print {
+        body > :not(#print-area) { display: none !important; }
+        #print-area { display: block !important; }
+        .no-print { display: none !important; } /* Hide elements you don't want printed */
+      }
+    </style>
+
+    <!-- React and Babel for JSX transformation -->
+    <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    
+    <!-- Firebase SDK (Modular API) -->
+    <script type="module">
+        // Import Firebase functions directly to make them available in the global scope if needed,
+        // or ensure they are used within the React context. For this structure, we make them global.
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, collection, onSnapshot, addDoc, Timestamp, doc, updateDoc, query, where } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+        // Expose to window for Babel script or direct use
+        window.firebase = { initializeApp, getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged, getFirestore, collection, onSnapshot, addDoc, Timestamp, doc, updateDoc, query, where };
+    </script>
+</head>
+<body>
+    <div id="root"></div>
+    <div id="print-area" class="hidden"></div> <!-- Hidden by default, visible on print -->
+
+    <script type="text/babel">
+        // Ensure React is globally available from the CDN script
+        const { useState, useEffect, createContext, useContext, Component } = React;
+        const { initializeApp, getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged, getFirestore, collection, onSnapshot, addDoc, Timestamp, doc, updateDoc, query, where } = window.firebase; // Access Firebase from window
+
+// --- Debugging Configuration ---
+// Set to 'true' to enable more console logging, or activate via localStorage.
+const DEBUG_MODE_DEFAULT = false;
+const isDebugMode = typeof window !== 'undefined' && localStorage.getItem('DLV_DEBUG') === 'true';
+
+// Helper for conditional logging
+const logDebug = (...args) => {
+  if (isDebugMode) {
+    console.log('[DLV_DEBUG]', ...args);
+  }
+};
+
+// --- ErrorBoundary Component (for catching UI errors gracefully) ---
+class ErrorBoundary extends Component {
+  constructor(props) {
+    super(props);
+    this.state = { hasError: false, error: null, errorInfo: null };
+  }
+
+  static getDerivedStateFromError(error) {
+    // Update state so the next render shows the fallback UI.
+    return { hasError: true };
+  }
+
+  componentDidCatch(error, errorInfo) {
+    // You can also log the error to an error reporting service
+    console.error("Uncaught error in component:", error, errorInfo);
+    this.setState({ error, errorInfo });
+  }
+
+  render() {
+    if (this.state.hasError) {
+      // You can render any custom fallback UI
+      return (
+        <div className="flex flex-col items-center justify-center min-h-screen bg-red-100 text-red-800 p-4 rounded-lg shadow-lg">
+          <h2 className="text-2xl font-bold mb-4">Oops! Something went wrong.</h2>
+          <p className="text-center mb-4">
+            The application encountered an error. Please try refreshing the page.
+          </p>
+          {isDebugMode && this.state.error && (
+            <details className="mt-4 p-2 bg-red-200 rounded-lg text-sm text-left w-full max-w-lg overflow-auto">
+              <summary>Error Details (Debug Mode)</summary>
+              <pre className="whitespace-pre-wrap break-all">{this.state.error.toString()}</pre>
+              <pre className="whitespace-pre-wrap break-all">{this.state.errorInfo.componentStack}</pre>
+            </details>
+          )}
+          <button
+            onClick={() => window.location.reload()}
+            className="mt-6 px-6 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors"
+          >
+            Refresh Page
+          </button>
+        </div>
+      );
+    }
+
+    return this.props.children;
+  }
+}
 
 // Define context for Firebase services, user ID, and userName
 const FirebaseContext = createContext(null);
@@ -23,7 +130,7 @@ const App = () => {
       const storedCart = sessionStorage.getItem('order_app_cart');
       return storedCart ? JSON.parse(storedCart) : {};
     } catch (e) {
-      console.error("Failed to parse cart from session storage:", e);
+      logDebug("Failed to parse cart from session storage:", e);
       return {};
     }
   });
@@ -76,12 +183,14 @@ const App = () => {
       try {
         ordersAppInstance = initializeApp(ordersFirebaseConfig, 'ordersApp');
       } catch (e) {
-        if (!e.message.includes('already exists')) {
+        if (e.code === 'app/duplicate-app') { // Use e.code for Firebase errors
+          logDebug("Orders Firebase App already initialized, getting existing instance.");
+          ordersAppInstance = getApp('ordersApp');
+        } else {
           console.error("Error initializing Orders Firebase App:", e);
           showUserModal(`Error initializing Orders DB: ${e.message}`);
           return;
         }
-        ordersAppInstance = getApp('ordersApp');
       }
 
       const firestoreOrders = getFirestore(ordersAppInstance);
@@ -92,11 +201,11 @@ const App = () => {
       const unsubscribeAuth = onAuthStateChanged(firebaseOrdersAuth, async (user) => {
         if (user) {
           setUserId(user.uid);
-          console.log("Orders DB Auth: Authenticated user:", user.uid);
+          logDebug("Orders DB Auth: Authenticated user:", user.uid);
         } else {
           try {
             await signInAnonymously(firebaseOrdersAuth);
-            console.log("Orders DB Auth: Signed in anonymously.");
+            logDebug("Orders DB Auth: Signed in anonymously.");
           } catch (error) {
             console.error("Orders DB Auth error:", error);
             showUserModal(`Orders DB Authentication failed: ${error.message}`);
@@ -123,11 +232,14 @@ const App = () => {
         try {
           inventoryAppInstance = initializeApp(EXISTING_FIREBASE_CONFIG, 'inventoryApp');
         } catch (e) {
-          if (!e.message.includes('already exists')) {
+          if (e.code === 'app/duplicate-app') { // Use e.code for Firebase errors
+            logDebug("Inventory Firebase App already initialized, getting existing instance.");
+            inventoryAppInstance = getApp('inventoryApp');
+          } else {
             console.error("Error initializing Inventory Firebase App:", e);
             showUserModal(`Error initializing Inventory DB: ${e.message}`);
+            return;
           }
-          inventoryAppInstance = getApp('inventoryApp');
         }
 
         const firestoreInventory = getFirestore(inventoryAppInstance);
@@ -146,6 +258,7 @@ const App = () => {
               ...doc.data()
             }));
             setInventory(items); // Update global inventory state
+            logDebug("Inventory data fetched successfully:", items);
           } catch (e) {
             console.error("Error processing inventory snapshot:", e);
             showUserModal("Failed to parse inventory data from existing DB. Data format might be incorrect.");
@@ -160,6 +273,7 @@ const App = () => {
           try {
             const sites = snapshot.docs.map(doc => doc.data().name).filter(Boolean);
             setAllSites(sites); // Update global sites state
+            logDebug("Sites data fetched successfully:", sites);
           } catch (e) {
             console.error("Error processing sites snapshot:", e);
             showUserModal("Failed to parse site data from existing DB. Data format might be incorrect.");
@@ -245,9 +359,11 @@ const App = () => {
       if (itemData.id) {
         const { id, ...dataToUpdate } = itemData;
         await updateDoc(doc(inventoryCollectionRef, id), dataToUpdate);
+        logDebug('Item updated successfully in warehouse tracker!', itemData);
         showUserModal('Item updated successfully in warehouse tracker!');
       } else {
         await addDoc(inventoryCollectionRef, itemData);
+        logDebug('New item added to warehouse tracker!', itemData);
         showUserModal('New item added to warehouse tracker!');
       }
       return true;
@@ -261,7 +377,7 @@ const App = () => {
   const handlePlaceSpecialOrder = async (orderData) => {
     if (!ordersDb || !userId || !userName) {
       showUserModal('Authentication or user name missing for placing order. Please refresh the page or log in.');
-      return false; // Return false to indicate failure
+      return false;
     }
 
     try {
@@ -270,22 +386,23 @@ const App = () => {
       await addDoc(ordersCollectionRef, {
         userId: userId,
         userName: userName,
-        site: orderData.site, // Site from special order form
-        items: orderData.items, // Items directly from form (special order items)
+        site: orderData.site,
+        items: orderData.items,
         timestamp: Timestamp.now(),
         status: 'Pending',
         needsFollowUp: false,
         lastFollowUpDate: null,
-        isSpecialOrder: true, // Flag for special order
+        isSpecialOrder: true,
         specialOrderNotes: orderData.specialOrderNotes || '',
       });
+      logDebug('Special order placed successfully!', orderData);
       showUserModal('Special order placed successfully!', null);
-      setCurrentPage('orders'); // Go to My Orders to see it
-      return true; // Return true to indicate success
+      setCurrentPage('orders');
+      return true;
     } catch (e) {
       console.error("Error placing special order:", e);
       showUserModal(`Failed to place special order: ${e.message}. Please try again.`);
-      return false; // Return false to indicate failure
+      return false;
     }
   };
 
@@ -302,7 +419,9 @@ const App = () => {
   }
 
   if (!userName && !isAdminMode && !isWarehouseMode) {
-    return <LoginScreen onLoginAttempt={handleLoginAttempt} showUserModal={showUserModal} />;
+    return (
+      <LoginScreen onLoginAttempt={handleLoginAttempt} showUserModal={showUserModal} />
+    );
   }
 
   return (
@@ -368,15 +487,19 @@ const App = () => {
         {/* Main Content */}
         <main className="container mx-auto p-6 flex-grow">
           {!isAdminMode && !isWarehouseMode ? (
-            <>
+            <ErrorBoundary> {/* Wrap primary content in ErrorBoundary */}
               {currentPage === 'inventory' && <ProductList setCurrentPage={setCurrentPage} />}
               {currentPage === 'cart' && <Cart onGoToInventory={() => setCurrentPage('inventory')} onOrderPlacedSuccess={() => setCurrentPage('orders')} />}
               {currentPage === 'orders' && <OrderHistory />}
-            </>
+            </ErrorBoundary>
           ) : isWarehouseMode ? (
-            <WarehouseDashboard />
+            <ErrorBoundary> {/* Wrap primary content in ErrorBoundary */}
+              <WarehouseDashboard />
+            </ErrorBoundary>
           ) : (
-            <AdminDashboard />
+            <ErrorBoundary> {/* Wrap primary content in ErrorBoundary */}
+              <AdminDashboard />
+            </ErrorBoundary>
           )}
         </main>
 
@@ -998,7 +1121,7 @@ const Cart = ({ onGoToInventory, onOrderPlacedSuccess }) => { // Added onOrderPl
         if (itemDetails) {
           return {
             itemId: itemId,
-            name: itemDetails.name || 'Unknown Item', // FIX: Ensure name is always a string
+            name: itemDetails.name || 'Unknown Item', // Ensure name is always a string
             description: itemDetails.description || '', // Ensure description is a string, default to empty if undefined
             quantity: quantity,
             status: 'Pending', // Default status for new items in order

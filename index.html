@@ -29,21 +29,39 @@
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
     
-    <!-- Firebase SDK (Modular API) - Removed type="module" from here -->
-    <!-- The Firebase imports will now be handled directly within the type="text/babel" script -->
+    <!-- Firebase SDK (Modular API) - Load all necessary Firebase functions directly -->
+    <!-- These scripts create a global 'firebase' object -->
+    <script src="https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js"></script>
+
+    <!-- Script to expose specific Firebase modular functions globally for Babel -->
+    <script type="module">
+      import { initializeApp, getApps, getApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+      import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+      import { getFirestore, collection, onSnapshot, addDoc, Timestamp, doc, updateDoc, query, where } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+      // Expose these specific functions globally under a distinct namespace
+      window.dlvFirebase = { // Using a unique name 'dlvFirebase' to avoid conflicts
+        initializeApp, getApps, getApp,
+        getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged,
+        getFirestore, collection, onSnapshot, addDoc, Timestamp, doc, updateDoc, query, where
+      };
+    </script>
 </head>
 <body>
     <div id="root"></div>
     <div id="print-area" class="hidden"></div> <!-- Hidden by default, visible on print -->
 
     <script type="text/babel">
-        // FIX: Directly import Firebase functions here.
-        // This resolves the 'exports is not defined' error by letting Babel handle the imports directly.
-        // The CDN URLs are kept for direct browser loading.
+        // FIX: Access Firebase functions from the custom global 'window.dlvFirebase' object.
+        // This avoids conflicts with how Babel standalone handles module scope.
         const { useState, useEffect, createContext, useContext, Component } = React;
-        const { initializeApp, getApps, getApp } = firebase; // getApps and getApp are still from global Firebase instance
-        const { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } = firebase;
-        const { getFirestore, collection, onSnapshot, addDoc, Timestamp, doc, updateDoc, query, where } = firebase;
+        const {
+          initializeApp, getApps, getApp,
+          getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged,
+          getFirestore, collection, onSnapshot, addDoc, Timestamp, doc, updateDoc, query, where
+        } = window.dlvFirebase;
 
 
 // --- Debugging Configuration ---
@@ -931,7 +949,7 @@ const ProductList = ({ setCurrentPage }) => { // Receive setCurrentPage prop
             No inventory items found. Add items to your existing Firebase Firestore 'inventory' collection.
           </div>
         ) : (
-          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-2 lg:grid-cols-3 gap-6 overflow-y-auto max-h-[calc(100vh-250px)] pr-2"> {/* Added scroll */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-2 lg:grid-cols-3 gap-6 overflow-y-auto max-h-[calc(100vh-250px)] pr-2">
             {inventory.map(item => (
               <ProductCard key={item.id} item={item} onAddToCart={handleAddToCartClick} />
             ))}
@@ -961,7 +979,7 @@ const ProductList = ({ setCurrentPage }) => { // Receive setCurrentPage prop
         </div>
         <div className="mt-6 space-y-2">
           <button
-            onClick={() => setCurrentPage('cart')} // Navigates to the full cart page
+            onClick={() => setCurrentPage('cart')}
             className="w-full bg-blue-600 text-white py-3 rounded-lg shadow-md hover:bg-blue-700 transition-colors duration-300 font-semibold"
           >
             Proceed to Checkout
@@ -980,7 +998,7 @@ const ProductList = ({ setCurrentPage }) => { // Receive setCurrentPage prop
                 type="number"
                 id="quantity-input"
                 value={inputQuantity}
-                onChange={(e) => setInputQuantity(Math.max(1, parseInt(e.target.value) || 1))} // Ensure at least 1
+                onChange={(e) => setInputQuantity(Math.max(1, parseInt(e.target.value) || 1))}
                 min="1"
                 className="w-full px-3 py-2 border border-gray-300 rounded-lg text-lg text-center"
                 autoFocus
@@ -1584,7 +1602,7 @@ const WarehouseDashboard = () => {
         {inventory.length === 0 ? (
           <div className="text-center py-4 text-gray-600">No inventory data available.</div>
         ) : (
-          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4 max-h-48 overflow-y-auto pr-2"> {/* Fixed height and scrollbar */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4 max-h-48 overflow-y-auto pr-2">
             {inventory.map(item => (
               <div key={item.id} className="bg-gray-100 rounded-lg p-3 shadow-sm text-sm">
                 <img
@@ -1769,7 +1787,7 @@ const AdminDashboard = () => {
         {inventory.length === 0 ? (
           <div className="text-center py-8 text-gray-600">No inventory items found to manage.</div>
         ) : (
-          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4 max-h-48 overflow-y-auto pr-2"> {/* Fixed height and scrollbar */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4 max-h-48 overflow-y-auto pr-2">
             {inventory.map(item => (
               <div key={item.id} className="bg-gray-100 rounded-lg p-4 shadow-sm flex flex-col justify-between">
                 <img

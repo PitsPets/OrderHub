@@ -54,12 +54,14 @@
     <script type="module">
         // Import Firebase modules
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
-        import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        // Add signInWithEmailAndPassword, createUserWithEmailAndPassword
+        import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
         import { getFirestore, collection, query, onSnapshot, doc, getDoc, setDoc, addDoc, updateDoc, deleteDoc, where, getDocs } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
         // Expose Firebase modules globally after they are imported
         window.FirebaseApp = { initializeApp };
-        window.FirebaseAuth = { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged };
+        // Expose new auth methods
+        window.FirebaseAuth = { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut };
         window.Firestore = { getFirestore, collection, query, onSnapshot, doc, getDoc, setDoc, addDoc, updateDoc, deleteDoc, where, getDocs };
     </script>
 
@@ -67,7 +69,8 @@
         // Now, these variables and modules should be correctly accessible from the window object
         const { useState, useEffect, createContext, useContext, useRef } = React;
         const { initializeApp } = window.FirebaseApp;
-        const { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } = window.FirebaseAuth;
+        // Destructure new auth methods
+        const { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut } = window.FirebaseAuth;
         const { getFirestore, collection, query, onSnapshot, doc, getDoc, setDoc, addDoc, updateDoc, deleteDoc, where, getDocs } = window.Firestore;
 
         // Firebase Configuration for the NEW 'dlvorders' project
@@ -134,27 +137,46 @@
                         logDebug("AuthProvider: Firebase app for dlvorders initialized.");
 
                         // Set up the onAuthStateChanged listener first and rely on it for final user state
-                        const unsubscribe = onAuthStateChanged(ordersAuthRef.current, (currentUser) => {
+                        const unsubscribe = onAuthStateChanged(ordersAuthRef.current, async (currentUser) => {
                             logDebug("onAuthStateChanged: Callback fired. currentUser:", currentUser?.uid);
                             if (currentUser) {
-                                setUser(currentUser);
-                                setUserId(currentUser.uid); // Set userId from Firebase currentUser UID
-                                setAuthError(null); // Clear any auth errors if a user signs in successfully
-                            } else {
-                                setUser(null);
-                                // If no user, ensure a random ID is set for non-authenticated actions
-                                if (!ordersAuthRef.current.currentUser) { // Double check if truly no current user from Firebase
-                                    setUserId(crypto.randomUUID());
-                                    logDebug("onAuthStateChanged: No Firebase user, set new random userId:", userId);
-                                } else {
-                                    logDebug("onAuthStateChanged: No Firebase user, retaining existing userId:", userId);
+                                // If a Firebase user is logged in, fetch their profile (name and role)
+                                const userProfileRef = doc(ordersDbRef.current, `artifacts/${CANVAS_APP_ID}/users`, currentUser.uid);
+                                try {
+                                    const userProfileSnap = await getDoc(userProfileRef);
+                                    if (userProfileSnap.exists()) {
+                                        const profileData = userProfileSnap.data();
+                                        setUser({ displayName: profileData.displayName, uid: currentUser.uid });
+                                        setRole(profileData.role);
+                                        setUserId(currentUser.uid);
+                                        setAuthError(null);
+                                        logDebug("onAuthStateChanged: User profile loaded from Firestore.", profileData);
+                                    } else {
+                                        // User authenticated with Firebase, but no profile exists yet (e.g., brand new anonymous user)
+                                        // Use a temporary name/role until the user explicitly logs in or registers.
+                                        setUser(currentUser);
+                                        setUserId(currentUser.uid);
+                                        setRole('orderer'); // Default role if no profile yet
+                                        logDebug("onAuthStateChanged: Firebase user, but no profile found. Defaulting role to orderer.");
+                                    }
+                                } catch (profileError) {
+                                    console.error("onAuthStateChanged: Error fetching user profile:", profileError);
+                                    setAuthError(`Failed to load user profile: ${profileError.message}`);
+                                    setUser(currentUser); // Still set user but acknowledge profile error
+                                    setUserId(currentUser.uid);
                                 }
+                            } else {
+                                // No Firebase user logged in
+                                setUser(null);
+                                setRole('orderer'); // Default role
+                                setUserId(crypto.randomUUID()); // Generate a random ID for unauthenticated actions
+                                logDebug("onAuthStateChanged: No Firebase user, setting anonymous/random user state.");
                             }
-                            setLoading(false); // Auth state has been determined (signed in or not), stop loading
+                            setLoading(false); // Auth state has been determined, stop loading
                             logDebug("AuthProvider: Auth state determined by listener, loading set to false.");
                         });
 
-                        // Attempt initial sign-in: first with custom token, then fallback immediately if it fails.
+                        // Attempt initial sign-in: first with custom token, then fallback if needed.
                         if (CANVAS_INITIAL_AUTH_TOKEN) {
                             try {
                                 logDebug("AuthProvider: Attempting signInWithCustomToken...");
@@ -162,23 +184,23 @@
                                 logDebug("AuthProvider: signInWithCustomToken attempt finished.");
                             } catch (error) {
                                 console.warn("AuthProvider: signInWithCustomToken failed. Error:", error);
-                                // Fall through to anonymous sign-in even if custom token fails
+                                // Fall through: the onAuthStateChanged listener will handle currentUser == null,
+                                // and the anonymous sign-in logic will ensure a session is attempted.
                             }
                         }
 
-                        // Always attempt anonymous sign-in if no custom token was provided, or if it failed.
-                        // We check !ordersAuthRef.current.currentUser to avoid redundant anonymous sign-ins
-                        // if a custom token miraculously worked OR if an existing anonymous session exists.
+                        // Ensure an anonymous session is established if no user is already logged in (e.g., if custom token failed)
+                        // This allows basic Firestore operations even before explicit email/password login.
                         if (!ordersAuthRef.current.currentUser) {
-                             try {
-                                logDebug("AuthProvider: Attempting signInAnonymously as primary or fallback...");
+                            try {
+                                logDebug("AuthProvider: No active Firebase user, attempting signInAnonymously as primary or fallback...");
                                 await signInAnonymously(ordersAuthRef.current);
                                 logDebug("AuthProvider: signInAnonymously attempt finished successfully.");
-                             } catch(error) {
+                            } catch (error) {
                                 console.error("AuthProvider: signInAnonymously also failed:", error);
-                                setAuthError(`Firebase Authentication failed: ${error.message}. Please enable Anonymous sign-in method in your 'dlvorders' Firebase project's Authentication settings.`);
-                                setLoading(false); // Crucial: Stop loading here if *all* auth attempts fail
-                             }
+                                setAuthError(`Firebase Authentication failed: ${error.message}. Please enable Email/Password and Anonymous sign-in methods in your 'dlvorders' Firebase project's Authentication settings.`);
+                                setLoading(false); // Critical: stop loading here if *all* auth attempts fail
+                            }
                         }
 
                         return () => unsubscribe(); // Cleanup the listener on component unmount
@@ -191,72 +213,122 @@
                 };
 
                 initializeAndAuth();
-
-                // Load user and role from localStorage on initial render
-                const savedDisplayName = localStorage.getItem('dlv_user_displayName');
-                const savedRole = localStorage.getItem('dlv_user_role');
-                if (savedDisplayName && savedRole) {
-                    // Temporarily set user and role from localStorage for faster UI display
-                    // The onAuthStateChanged listener will eventually set the true Firebase UID
-                    setUser({ displayName: savedDisplayName, uid: userId || 'temp-id' }); // Use existing userId or temp
-                    setRole(savedRole);
-                    logDebug("AuthProvider: Loaded user and role from localStorage:", savedDisplayName, savedRole);
-                }
-
             }, []); // Empty dependency array means this runs once on mount
 
-            const login = (name) => {
-                logDebug("AuthContext.login: Attempting login with name:", name);
-                const currentFirebaseUid = ordersAuthRef.current?.currentUser?.uid;
-                // Use Firebase UID if available (from anonymous or custom token auth), otherwise generate a new random.
-                const newUid = currentFirebaseUid || crypto.randomUUID();
+            const login = async (email, password, displayNameInput) => {
+                logDebug("AuthContext.login: Attempting login with email:", email, "and display name:", displayNameInput);
+                setAuthError(null); // Clear previous errors
 
-                let newRole = 'orderer';
-                if (name.toLowerCase() === 'warehouse') {
-                    newRole = 'warehouse';
-                } else if (name.toLowerCase() === 'admin') {
-                    newRole = 'admin';
+                if (!ordersAuthRef.current) {
+                    setAuthError("Firebase Auth not initialized.");
+                    return;
+                }
+                if (!ordersDbRef.current) {
+                    setAuthError("Firebase Firestore not initialized.");
+                    return;
                 }
 
-                // Persist display name and role to localStorage
-                localStorage.setItem('dlv_user_displayName', name);
-                localStorage.setItem('dlv_user_role', newRole);
+                try {
+                    // Try to sign in with email and password first
+                    let credential;
+                    try {
+                        credential = await signInWithEmailAndPassword(ordersAuthRef.current, email, password);
+                        logDebug("AuthContext.login: Signed in with email/password.");
+                    } catch (signInError) {
+                        if (signInError.code === 'auth/user-not-found' || signInError.code === 'auth/wrong-password') {
+                            // If user not found or wrong password, try to create account if displayName provided (acting as registration)
+                            if (displayNameInput) {
+                                logDebug("AuthContext.login: User not found or wrong password, attempting to create new account...");
+                                credential = await createUserWithEmailAndPassword(ordersAuthRef.current, email, password);
+                                logDebug("AuthContext.login: Account created with email/password.");
+                            } else {
+                                throw signInError; // If no display name, it's just a failed sign-in
+                            }
+                        } else {
+                            throw signInError; // Re-throw other sign-in errors
+                        }
+                    }
 
-                setRole(newRole);
-                setUser({ displayName: name, uid: newUid });
-                setUserId(newUid);
-                logDebug(`AuthContext.login: Logged in as ${newRole} with UID: ${newUid}`);
+                    const currentUser = credential.user;
+                    let newRole = 'orderer';
+                    let finalDisplayName = displayNameInput || "User"; // Use input name or default
+
+                    // Determine role based on typed display name (for first login/registration)
+                    if (displayNameInput) {
+                        if (displayNameInput.toLowerCase() === 'warehouse') {
+                            newRole = 'warehouse';
+                        } else if (displayNameInput.toLowerCase() === 'admin') {
+                            newRole = 'admin';
+                        }
+                    }
+
+                    // Check if user profile already exists in Firestore
+                    const userProfileRef = doc(ordersDbRef.current, `artifacts/${CANVAS_APP_ID}/users`, currentUser.uid);
+                    const userProfileSnap = await getDoc(userProfileRef);
+
+                    if (!userProfileSnap.exists()) {
+                        // If profile doesn't exist, create it with the selected name and role
+                        await setDoc(userProfileRef, {
+                            displayName: finalDisplayName,
+                            email: currentUser.email,
+                            role: newRole,
+                            createdAt: new Date().toISOString()
+                        });
+                        logDebug("AuthContext.login: Created new user profile in Firestore.");
+                    } else {
+                        // If profile exists, update local state with profile data (in case role was changed by admin)
+                        const profileData = userProfileSnap.data();
+                        newRole = profileData.role || 'orderer'; // Use role from Firestore
+                        finalDisplayName = profileData.displayName || finalDisplayName;
+                        logDebug("AuthContext.login: Loaded existing user profile from Firestore.");
+                    }
+
+                    setUser({ displayName: finalDisplayName, uid: currentUser.uid });
+                    setRole(newRole);
+                    setUserId(currentUser.uid); // Ensure userId is the Firebase UID
+                    setAuthError(null); // Clear any errors
+                    logDebug(`AuthContext.login: Final logged in as ${finalDisplayName} (${newRole}) with UID: ${currentUser.uid}`);
+
+                } catch (error) {
+                    console.error("AuthContext.login: Login/Registration failed:", error);
+                    setAuthError(`Login/Registration failed: ${error.message}`);
+                    // Fallback to anonymous if email/password fails, but keep error message
+                    try {
+                        await signInAnonymously(ordersAuthRef.current);
+                        logDebug("AuthContext.login: Falling back to anonymous sign-in after failed email/password.");
+                        // onAuthStateChanged will handle the state update for anonymous user
+                    } catch (anonError) {
+                        console.error("AuthContext.login: Anonymous fallback also failed:", anonError);
+                        setAuthError(prev => `${prev}\nCritical: Anonymous sign-in also failed.`);
+                    }
+                }
             };
 
-            const logout = () => {
+            const logout = async () => {
                 logDebug("AuthContext.logout: Attempting logout.");
-                ordersAuthRef.current.signOut().then(() => {
-                    // Clear persisted state from localStorage
-                    localStorage.removeItem('dlv_user_displayName');
-                    localStorage.removeItem('dlv_user_role');
-
-                    setUser(null);
-                    setRole('orderer');
-                    setUserId(null); // Clear userId after logout
-                    logDebug("AuthContext.logout: Signed out successfully.");
-                }).catch(error => {
+                try {
+                    await signOut(ordersAuthRef.current); // Sign out from Firebase Auth
+                    // After Firebase signOut, onAuthStateChanged listener will fire with null user,
+                    // which will clear local user state and set a new random userId.
+                    logDebug("AuthContext.logout: Signed out from Firebase Auth.");
+                } catch (error) {
                     console.error("AuthContext.logout: Error signing out:", error);
                     setAuthError(`Logout failed: ${error.message}`);
-                });
+                }
             };
 
             return (
                 <AuthContext.Provider value={{
                     user,
                     role,
-                    userId, // This userId comes from Firebase Auth UID or random if auth fails
-                    login,
+                    userId,
+                    login, // Now accepts email, password, and displayName
                     logout,
                     loading,
                     authError,
-                    ordersDb: ordersDbRef.current, // Pass the orders Firestore instance
-                    ordersAuth: ordersAuthRef.current, // Pass the orders Auth instance
-                    CANVAS_APP_ID // Pass the app ID for collection paths
+                    ordersDb: ordersDbRef.current,
+                    ordersAuth: ordersAuthRef.current,
+                    CANVAS_APP_ID
                 }}>
                     {children}
                 </AuthContext.Provider>
@@ -422,7 +494,7 @@
             if (!user || !user.displayName) {
                 logDebug("App: Displaying LoginScreen. User state:", user);
                 // Pass the 'login' function directly from AuthContext to LoginScreen
-                return <LoginScreen onLogin={login} />;
+                return <LoginScreen onLogin={login} showUserModal={showUserModal} />;
             }
 
             const headerNavItems = [
@@ -522,13 +594,26 @@
         };
 
         {/* Login Screen Component */}
-        const LoginScreen = ({ onLogin }) => {
-            const [name, setName] = useState('');
+        const LoginScreen = ({ onLogin, showUserModal }) => {
+            const [email, setEmail] = useState('');
+            const [password, setPassword] = useState('');
+            const [displayName, setDisplayName] = useState(''); // New: for initial user name input
+            const [isRegisterMode, setIsRegisterMode] = useState(false);
 
-            const handleSubmit = (e) => {
+            const handleSubmit = async (e) => {
                 e.preventDefault();
-                if (name.trim()) {
-                    onLogin(name.trim());
+                if (!email || !password) {
+                    showUserModal("Please enter both email and password.", "error");
+                    return;
+                }
+
+                try {
+                    // Pass all necessary info to the login function in AuthContext
+                    await onLogin(email, password, displayName); // displayName is optional for existing logins
+                } catch (error) {
+                    // Error handling is primarily done in AuthProvider now, but this is a fallback.
+                    console.error("LoginScreen: Login/Registration submission error:", error);
+                    showUserModal(`An unexpected error occurred during login/registration: ${error.message}`, "error");
                 }
             };
 
@@ -536,30 +621,70 @@
                 <div className="flex items-center justify-center min-h-screen bg-gradient-to-r from-blue-500 to-indigo-600 p-4">
                     <div className="bg-white p-8 rounded-xl shadow-2xl w-full max-w-md text-center transform hover:scale-105 transition-transform duration-300">
                         <h2 className="text-4xl font-extrabold text-gray-900 mb-6">Welcome to DLV Order Hub</h2>
-                        <p className="text-gray-600 mb-8 text-lg">Please log in to continue.</p>
+                        <p className="text-gray-600 mb-8 text-lg">
+                            {isRegisterMode ? "Register your account" : "Log in to continue"}
+                        </p>
                         <form onSubmit={handleSubmit} className="space-y-6">
                             <div>
-                                <label htmlFor="name" className="sr-only">Your Name</label>
+                                <label htmlFor="email" className="sr-only">Email</label>
                                 <input
-                                    type="text"
-                                    id="name"
-                                    value={name}
-                                    onChange={(e) => setName(e.target.value)}
-                                    placeholder="Enter your name (e.g., John Doe, warehouse, admin)"
+                                    type="email"
+                                    id="email"
+                                    value={email}
+                                    onChange={(e) => setEmail(e.target.value)}
+                                    placeholder="Enter your email"
                                     className="w-full px-5 py-3 border border-gray-300 rounded-lg shadow-sm focus:ring-blue-500 focus:border-blue-500 text-lg placeholder-gray-500"
                                     required
                                 />
                             </div>
+                            <div>
+                                <label htmlFor="password" className="sr-only">Password</label>
+                                <input
+                                    type="password"
+                                    id="password"
+                                    value={password}
+                                    onChange={(e) => setPassword(e.target.value)}
+                                    placeholder="Enter your password"
+                                    className="w-full px-5 py-3 border border-gray-300 rounded-lg shadow-sm focus:ring-blue-500 focus:border-blue-500 text-lg placeholder-gray-500"
+                                    required
+                                />
+                            </div>
+                            {isRegisterMode && (
+                                <div>
+                                    <label htmlFor="displayName" className="sr-only">Your Name (for profile & role)</label>
+                                    <input
+                                        type="text"
+                                        id="displayName"
+                                        value={displayName}
+                                        onChange={(e) => setDisplayName(e.target.value)}
+                                        placeholder="Enter your name (e.g., John Doe, warehouse, admin)"
+                                        className="w-full px-5 py-3 border border-gray-300 rounded-lg shadow-sm focus:ring-blue-500 focus:border-blue-500 text-lg placeholder-gray-500"
+                                        required
+                                    />
+                                </div>
+                            )}
                             <button
                                 type="submit"
                                 className="w-full bg-blue-600 text-white py-3 px-6 rounded-lg text-xl font-semibold hover:bg-blue-700 transition-colors duration-300 transform hover:-translate-y-1 shadow-lg"
                             >
-                                Log In
+                                {isRegisterMode ? "Register Account" : "Log In"}
                             </button>
                         </form>
-                        <p className="mt-8 text-gray-500 text-sm">
-                            Use "warehouse" or "admin" for special access.
+                        <p className="mt-6 text-gray-600 text-md">
+                            {isRegisterMode ? "Already have an account?" : "Don't have an account?"}{' '}
+                            <button
+                                type="button"
+                                onClick={() => setIsRegisterMode(!isRegisterMode)}
+                                className="text-blue-600 hover:text-blue-800 font-semibold transition-colors duration-200"
+                            >
+                                {isRegisterMode ? "Log In here" : "Register here"}
+                            </button>
                         </p>
+                        {isRegisterMode && (
+                            <p className="mt-2 text-gray-500 text-sm">
+                                For roles, type "warehouse" or "admin" as your name during registration.
+                            </p>
+                        )}
                     </div>
                 </div>
             );
@@ -1168,9 +1293,8 @@
                 showUserModal(
                     "Send this follow-up message?",
                     'confirm',
-                    async () => { // Changed to async function here
+                    async () => {
                         try {
-                            // Ensure docRef is defined within the async function scope
                             const orderDocRef = doc(ordersDb, `artifacts/${CANVAS_APP_ID}/orders`, orderId);
                             await updateDoc(orderDocRef, {
                                 followUpRequests: [...(selectedOrder.followUpRequests || []), {
@@ -1327,7 +1451,7 @@
                                                 </div>
                                             ))
                                         ) : (
-                                            <p className="text-gray-600 italic">No follow-up messages yet.</p>
+                                            <p className="text-gray-600 italic">No communication yet.</p>
                                         )}
                                     </div>
                                     <textarea
@@ -1376,7 +1500,17 @@
                     return;
                 }
 
-                // Fetch all orders
+                // Get role from AuthContext
+                const { role } = useContext(AuthContext);
+
+                // Only allow warehouse/admin to list all orders
+                if (role !== 'warehouse' && role !== 'admin') {
+                    showUserModal("You do not have permission to view Order Management.", "error");
+                    setLoading(false);
+                    setAllOrders([]); // Clear any potentially loaded data
+                    return;
+                }
+
                 const ordersColRef = collection(ordersDb, `artifacts/${CANVAS_APP_ID}/orders`);
                 const q = query(ordersColRef);
 
@@ -1397,7 +1531,7 @@
                 });
 
                 return () => unsubscribe();
-            }, [ordersDb]);
+            }, [ordersDb, userId, useContext(AuthContext).role]); // Depend on role to re-run if role changes
 
             const filteredOrders = allOrders.filter(order =>
                 order.id.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -1654,7 +1788,7 @@
                                             selectedOrder.followUpRequests.map((req, idx) => (
                                                 <div key={idx} className={`text-sm bg-white p-2 rounded-md shadow-sm ${req.from === selectedOrder.userId ? 'text-blue-800' : 'text-green-800'}`}>
                                                     <p className="font-medium">
-                                                        {new Date(req.timestamp).toLocaleString()} - From {req.from === selectedOrder.userId ? selectedOrder.userName : 'You (Admin/Warehouse)'}:
+                                                        {new Date(req.timestamp).toLocaleString()} - From {req.from === userId ? 'You' : 'Warehouse/Admin'}:
                                                     </p>
                                                     <p className="pl-4">{req.message}</p>
                                                 </div>
@@ -1670,7 +1804,7 @@
                                         onKeyPress={(e) => {
                                             if (e.key === 'Enter' && !e.shiftKey) { // Send on Enter, allow Shift+Enter for newline
                                                 e.preventDefault();
-                                                handleReplyToFollowUp(selectedOrder.id, e.target.value);
+                                                handleReplyToFollowUp(e.target.value);
                                                 e.target.value = ''; // Clear after sending
                                             }
                                         }}
@@ -1678,7 +1812,7 @@
                                     <button
                                         onClick={(e) => {
                                             const textarea = e.target.previousElementSibling;
-                                            handleReplyToFollowUp(selectedOrder.id, textarea.value);
+                                            handleReplyToFollowUp(selectedOrder.id, textarea.value); // Pass orderId here
                                             textarea.value = ''; // Clear after sending
                                         }}
                                         className="mt-2 px-4 py-2 bg-purple-600 text-white rounded-md hover:bg-purple-700 transition-colors duration-200 text-sm font-medium"

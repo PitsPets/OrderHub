@@ -1,893 +1,1697 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>DLV Order Hub</title>
     <!-- Tailwind CSS CDN -->
     <script src="https://cdn.tailwindcss.com"></script>
-    <!-- Google Fonts: Inter -->
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <!-- Google Fonts - Inter -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <!-- Font Awesome for icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
     <style>
-      body {
-        font-family: 'Inter', sans-serif;
-      }
-      /* Custom styles for animations, modals, and print */
-      @keyframes scale-in{from{opacity:0;transform:scale(.95)}to{opacity:1;transform:scale(1)}}
-      .animate-scale-in{animation:scale-in .2s ease-out forwards}
-
-      /* Styles for print output */
-      @media print {
-        body > :not(#print-area) { display: none !important; }
-        #print-area { display: block !important; }
-        .no-print { display: none !important; } /* Hide elements you don't want printed */
-      }
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #f8fafc; /* Light gray background */
+        }
+        /* Custom scrollbar for better aesthetics */
+        ::-webkit-scrollbar {
+            width: 8px;
+        }
+        ::-webkit-scrollbar-track {
+            background: #f1f1f1;
+            border-radius: 10px;
+        }
+        ::-webkit-scrollbar-thumb {
+            background: #888;
+            border-radius: 10px;
+        }
+        ::-webkit-scrollbar-thumb:hover {
+            background: #555;
+        }
     </style>
-
-    <!-- React and Babel for JSX transformation -->
-    <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
-    <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
-    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
-    
-    <!-- Firebase SDK (Compatibility versions) -->
-    <script src="https://www.gstatic.com/firebasejs/11.6.1/firebase-app-compat.js"></script>
-    <script src="https://www.gstatic.com/firebasejs/11.6.1/firebase-auth-compat.js"></script>
-    <script src="https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore-compat.js"></script>
 </head>
 <body>
     <div id="root"></div>
-    <div id="print-area" class="hidden"></div> <!-- Hidden by default, visible on print -->
+
+    <!-- Babel Standalone for in-browser JSX transformation -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <!-- React and ReactDOM CDNs -->
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+
+    <!-- Global variables and Firebase module exposure (ensure these run first) -->
+    <script>
+        // Define global variables provided by the Canvas environment (or defaults)
+        // These are set directly on the window object to ensure immediate global availability
+        window.__app_id = typeof __app_id !== 'undefined' ? __app_id : 'default-canvas-app-id';
+        window.__firebase_config = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : null;
+        window.__initial_auth_token = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
+    </script>
+
+    <!-- Firebase CDNs and module imports (runs after global variables are set) -->
+    <script type="module">
+        // Import Firebase modules
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, collection, query, onSnapshot, doc, getDoc, setDoc, addDoc, updateDoc, deleteDoc, where, getDocs } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+        // Expose Firebase modules globally after they are imported
+        window.FirebaseApp = { initializeApp };
+        window.FirebaseAuth = { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged };
+        window.Firestore = { getFirestore, collection, query, onSnapshot, doc, getDoc, setDoc, addDoc, updateDoc, deleteDoc, where, getDocs };
+    </script>
 
     <script type="text/babel">
-        const { useState, useEffect, createContext, useContext, Component } = React;
+        // Now, these variables and modules should be correctly accessible from the window object
+        const { useState, useEffect, createContext, useContext, useRef } = React;
+        const { initializeApp } = window.FirebaseApp;
+        const { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } = window.FirebaseAuth;
+        const { getFirestore, collection, query, onSnapshot, doc, getDoc, setDoc, addDoc, updateDoc, deleteDoc, where, getDocs } = window.Firestore;
 
-        // Debugging Configuration
-        const DEBUG_MODE_DEFAULT = false;
-        const isDebugMode = typeof window !== 'undefined' && localStorage.getItem('DLV_DEBUG') === 'true';
-
-        const logDebug = (...args) => {
-          if (isDebugMode) {
-            console.log('[DLV_DEBUG]', ...args);
-          }
+        // Firebase Configuration for the NEW 'dlvorders' project
+        const ordersFirebaseConfig = {
+            apiKey: "AIzaSyArtDGiH3YtVc7Ro43limWa1cCULnVXp4w",
+            authDomain: "dlvorders.firebaseapp.com",
+            projectId: "dlvorders",
+            storageBucket: "dlvorders.firebasestorage.app",
+            messagingSenderId: "69353305480",
+            appId: "1:69353305480:web:582133ff862edbfbb8763d",
         };
 
-        // ErrorBoundary Component
-        class ErrorBoundary extends Component {
-          constructor(props) {
-            super(props);
-            this.state = { hasError: false, error: null, errorInfo: null };
-          }
+        // Firebase Configuration for the EXISTING 'dlv-warehouse-tracker' project
+        const EXISTING_FIREBASE_CONFIG = {
+            apiKey: "AIzaSyC9Tf7tOlZhYNe6ubDZ7JFJhsMswiimxPw", // Your actual API key
+            authDomain: "dlv-warehouse-tracker.firebaseapp.com", // Your actual auth domain
+            projectId: "dlv-warehouse-tracker", // This is the projectId for your 'dlv-warehouse-tracker' project
+            storageBucket: "dlv-warehouse-tracker.firebasestorage.app",
+            messagingSenderId: "267729758583", // Your actual sender ID
+            appId: "1:267729758583:web:f5f7ca26afc99c17819972", // Your actual app ID
+        };
 
-          static getDerivedStateFromError(error) {
-            return { hasError: true };
-          }
+        // Crucial for path matching in the dlv-warehouse-tracker project
+        const WAREHOUSE_TRACKER_DATA_APP_ID = 'default-app-id';
 
-          componentDidCatch(error, errorInfo) {
-            console.error("Uncaught error in component:", error, errorInfo);
-            this.setState({ error, errorInfo });
-          }
+        // Global Canvas environment variables (now correctly accessed from window)
+        const CANVAS_APP_ID = window.__app_id;
+        const CANVAS_FIREBASE_CONFIG = window.__firebase_config;
+        const CANVAS_INITIAL_AUTH_TOKEN = window.__initial_auth_token;
 
-          render() {
-            if (this.state.hasError) {
-              return (
-                <div className="flex flex-col items-center justify-center min-h-screen bg-red-100 text-red-800 p-4 rounded-lg shadow-lg">
-                  <h2 className="text-2xl font-bold mb-4">Oops! Something went wrong.</h2>
-                  <p className="text-center mb-4">
-                    The application encountered an error. Please try refreshing the page.
-                  </p>
-                  {isDebugMode && this.state.error && (
-                    <details className="mt-4 p-2 bg-red-200 rounded-lg text-sm text-left w-full max-w-lg overflow-auto">
-                      <summary>Error Details (Debug Mode)</summary>
-                      <pre className="whitespace-pre-wrap break-all">{this.state.error.toString()}</pre>
-                      <pre className="whitespace-pre-wrap break-all">{this.state.errorInfo.componentStack}</pre>
-                    </details>
-                  )}
-                  <button
-                    onClick={() => window.location.reload()}
-                    className="mt-6 px-6 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors"
-                  >
-                    Refresh Page
-                  </button>
-                </div>
-              );
+        // Helper for debug logging
+        const DEBUG_MODE = localStorage.getItem('DLV_DEBUG') === 'true';
+        const logDebug = (...args) => {
+            if (DEBUG_MODE) {
+                console.log('[DLV_DEBUG]', ...args);
             }
+        };
 
-            return this.props.children;
-          }
-        }
+        // --- Context for Authentication ---
+        const AuthContext = createContext(null);
 
-        // Firebase Context
-        const FirebaseContext = createContext(null);
+        const AuthProvider = ({ children }) => {
+            const [user, setUser] = useState(null);
+            const [role, setRole] = useState('orderer'); // 'orderer', 'warehouse', 'admin'
+            const [userId, setUserId] = useState(null);
+            const [loading, setLoading] = useState(true);
+            const [authError, setAuthError] = useState(null);
 
-        const App = () => {
-          const [ordersDb, setOrdersDb] = useState(null);
-          const [ordersAuth, setOrdersAuth] = useState(null);
-          const [inventoryDb, setInventoryDb] = useState(null);
-          const [userId, setUserId] = useState(null);
-          const [userName, setUserName] = useState('');
-          const [isAuthReady, setIsAuthReady] = useState(false);
-          const [currentPage, setCurrentPage] = useState('inventory');
-          const [isAdminMode, setIsAdminMode] = useState(false);
-          const [isWarehouseMode, setIsWarehouseMode] = useState(false);
-          const [inventory, setInventory] = useState([]);
-          const [allSites, setAllSites] = useState([]);
-          const [showModal, setShowModal] = useState(false);
-          const [modalMessage, setModalMessage] = useState('');
-          const [modalOnConfirm, setModalOnConfirm] = useState(null);
+            // Firebase instances for the 'dlvorders' project
+            const ordersAppRef = useRef(null);
+            const ordersDbRef = useRef(null);
+            const ordersAuthRef = useRef(null);
 
-          const [cartItems, setCartItems] = useState(() => {
-            try {
-              const storedCart = sessionStorage.getItem('order_app_cart');
-              return storedCart ? JSON.parse(storedCart) : {};
-            } catch (e) {
-              logDebug("Failed to parse cart from session storage:", e);
-              return {};
-            }
-          });
+            useEffect(() => {
+                const initializeAndAuth = async () => {
+                    logDebug("AuthProvider: Initializing Firebase for DLV Order Hub and attempting auth...");
+                    setAuthError(null); // Clear any previous auth errors at the start
 
-          const showUserModal = (message, onConfirm = null) => {
-            setModalMessage(message);
-            setModalOnConfirm(() => onConfirm);
-            setShowModal(true);
-          };
+                    try {
+                        const appConfig = CANVAS_FIREBASE_CONFIG || ordersFirebaseConfig;
+                        ordersAppRef.current = initializeApp(appConfig);
+                        ordersDbRef.current = getFirestore(ordersAppRef.current);
+                        ordersAuthRef.current = getAuth(ordersAppRef.current);
+                        logDebug("AuthProvider: Firebase app for dlvorders initialized.");
 
-          const closeModal = () => {
-            setShowModal(false);
-            setModalMessage('');
-            setModalOnConfirm(null);
-          };
+                        // Set up the onAuthStateChanged listener first and rely on it for final user state
+                        const unsubscribe = onAuthStateChanged(ordersAuthRef.current, (currentUser) => {
+                            logDebug("onAuthStateChanged: Callback fired. currentUser:", currentUser?.uid);
+                            if (currentUser) {
+                                setUser(currentUser);
+                                setUserId(currentUser.uid); // Set userId from Firebase currentUser UID
+                                setAuthError(null); // Clear any auth errors if a user signs in successfully
+                            } else {
+                                setUser(null);
+                                // If no user, ensure a random ID is set for non-authenticated actions
+                                if (!ordersAuthRef.current.currentUser) { // Double check if truly no current user from Firebase
+                                    setUserId(crypto.randomUUID());
+                                    logDebug("onAuthStateChanged: No Firebase user, set new random userId:", userId);
+                                } else {
+                                    logDebug("onAuthStateChanged: No Firebase user, retaining existing userId:", userId);
+                                }
+                            }
+                            setLoading(false); // Auth state has been determined (signed in or not), stop loading
+                            logDebug("AuthProvider: Auth state determined by listener, loading set to false.");
+                        });
 
-          const handleModalConfirm = () => {
-            if (modalOnConfirm) {
-              modalOnConfirm();
-            }
-            closeModal();
-          };
+                        // Attempt initial sign-in: first with custom token, then fallback immediately if it fails.
+                        if (CANVAS_INITIAL_AUTH_TOKEN) {
+                            try {
+                                logDebug("AuthProvider: Attempting signInWithCustomToken...");
+                                await signInWithCustomToken(ordersAuthRef.current, CANVAS_INITIAL_AUTH_TOKEN);
+                                logDebug("AuthProvider: signInWithCustomToken attempt finished.");
+                            } catch (error) {
+                                console.warn("AuthProvider: signInWithCustomToken failed. Error:", error);
+                                // Fall through to anonymous sign-in even if custom token fails
+                            }
+                        }
 
-          useEffect(() => {
-            const initFirebaseApps = async () => {
-              const ordersFirebaseConfig = {
-                apiKey: "AIzaSyArtDGiH3YtVc7Ro43limWa1cCULnVXp4w",
-                authDomain: "dlvorders.firebaseapp.com",
-                projectId: "dlvorders",
-                storageBucket: "dlvorders.firebasestorage.app",
-                messagingSenderId: "69353305480",
-                appId: "1:69353305480:web:582133ff862edbfbb8763d",
-              };
+                        // Always attempt anonymous sign-in if no custom token was provided, or if it failed.
+                        // We check !ordersAuthRef.current.currentUser to avoid redundant anonymous sign-ins
+                        // if a custom token miraculously worked OR if an existing anonymous session exists.
+                        if (!ordersAuthRef.current.currentUser) {
+                             try {
+                                logDebug("AuthProvider: Attempting signInAnonymously as primary or fallback...");
+                                await signInAnonymously(ordersAuthRef.current);
+                                logDebug("AuthProvider: signInAnonymously attempt finished successfully.");
+                             } catch(error) {
+                                console.error("AuthProvider: signInAnonymously also failed:", error);
+                                setAuthError(`Firebase Authentication failed: ${error.message}. Please enable Anonymous sign-in method in your 'dlvorders' Firebase project's Authentication settings.`);
+                                setLoading(false); // Crucial: Stop loading here if *all* auth attempts fail
+                             }
+                        }
 
-              let ordersAppInstance;
-              try {
-                ordersAppInstance = firebase.initializeApp(ordersFirebaseConfig, 'ordersApp');
-              } catch (e) {
-                if (e.code === 'app/duplicate-app') {
-                  logDebug("Orders Firebase App already initialized, getting existing instance.");
-                  ordersAppInstance = firebase.app('ordersApp');
-                } else {
-                  console.error("Error initializing Orders Firebase App:", e);
-                  showUserModal(`Error initializing Orders DB: ${e.message}`);
-                  return;
-                }
-              }
-
-              const firestoreOrders = ordersAppInstance.firestore();
-              const firebaseOrdersAuth = ordersAppInstance.auth();
-              setOrdersDb(firestoreOrders);
-              setOrdersAuth(firebaseOrdersAuth);
-
-              const unsubscribeAuth = firebaseOrdersAuth.onAuthStateChanged(async (user) => {
-                if (user) {
-                  setUserId(user.uid);
-                  logDebug("Orders DB Auth: Authenticated user:", user.uid);
-                } else {
-                  try {
-                    await firebaseOrdersAuth.signInAnonymously();
-                    logDebug("Orders DB Auth: Signed in anonymously.");
-                  } catch (error) {
-                    console.error("Orders DB Auth error:", error);
-                    showUserModal(`Orders DB Authentication failed: ${error.message}`);
-                  }
-                }
-                setIsAuthReady(true);
-              });
-
-              const EXISTING_FIREBASE_CONFIG = {
-                apiKey: "AIzaSyC9Tf7tOlZhYNe6ubDZ7JFJhsMswiimxPw",
-                authDomain: "dlv-warehouse-tracker.firebaseapp.com",
-                projectId: "dlv-warehouse-tracker",
-                storageBucket: "dlv-warehouse-tracker.firebasestorage.app",
-                messagingSenderId: "267729758583",
-                appId: "1:267729758583:web:f5f7ca26afc99c17819972",
-              };
-
-              let inventoryAppInstance;
-              let unsubscribeInventory;
-              let unsubscribeSites;
-
-              if (EXISTING_FIREBASE_CONFIG.projectId && EXISTING_FIREBASE_CONFIG.apiKey !== "YOUR_EXISTING_DB_API_KEY") {
-                try {
-                  inventoryAppInstance = firebase.initializeApp(EXISTING_FIREBASE_CONFIG, 'inventoryApp');
-                } catch (e) {
-                  if (e.code === 'app/duplicate-app') {
-                    logDebug("Inventory Firebase App already initialized, getting existing instance.");
-                    inventoryAppInstance = firebase.app('inventoryApp');
-                  } else {
-                    console.error("Error initializing Inventory Firebase App:", e);
-                    showUserModal(`Error initializing Inventory DB: ${e.message}`);
-                    return;
-                  }
-                }
-
-                const firestoreInventory = inventoryAppInstance.firestore();
-                setInventoryDb(firestoreInventory);
-
-                const WAREHOUSE_TRACKER_DATA_APP_ID = 'default-app-id';
-
-                const inventoryCollectionRef = firestoreInventory.collection(`artifacts/${WAREHOUSE_TRACKER_DATA_APP_ID}/public/data/inventory`);
-                const sitesCollectionRef = firestoreInventory.collection(`artifacts/${WAREHOUSE_TRACKER_DATA_APP_ID}/public/data/sites`);
-
-                unsubscribeInventory = inventoryCollectionRef.onSnapshot((snapshot) => {
-                  try {
-                    const items = snapshot.docs.map(doc => ({
-                      id: doc.id,
-                      ...doc.data()
-                    }));
-                    setInventory(items);
-                    logDebug("Inventory data fetched successfully:", items);
-                  } catch (e) {
-                    console.error("Error processing inventory snapshot:", e);
-                    showUserModal("Failed to parse inventory data from existing DB. Data format might be incorrect.");
-                  }
-                }, (e) => {
-                  console.error("Error setting up inventory snapshot listener from existing DB:", e);
-                  showUserModal("Failed to connect to inventory updates. Please check your connection and Firebase rules for the existing database.");
-                });
-
-                unsubscribeSites = sitesCollectionRef.onSnapshot((snapshot) => {
-                  try {
-                    const sites = snapshot.docs.map(doc => doc.data().name).filter(Boolean);
-                    setAllSites(sites);
-                    logDebug("Sites data fetched successfully:", sites);
-                  } catch (e) {
-                    console.error("Error processing sites snapshot:", e);
-                    showUserModal("Failed to parse site data from existing DB. Data format might be incorrect.");
-                  }
-                }, (error) => {
-                  console.error("Error setting up sites snapshot listener from existing DB:", error);
-                  showUserModal("Failed to load project sites from your existing database. Please check console for details and ensure correct path/rules.");
-                });
-
-                return () => {
-                  unsubscribeAuth();
-                  unsubscribeInventory();
-                  if (unsubscribeSites) {
-                    unsubscribeSites();
-                  }
+                        return () => unsubscribe(); // Cleanup the listener on component unmount
+                    } catch (initializationError) {
+                        // Catches errors during initializeApp itself (e.g., bad firebase config or network)
+                        console.error("AuthProvider: Critical error during Firebase app initialization:", initializationError);
+                        setAuthError(`Firebase initialization error: ${initializationError.message}. Double-check your Firebase config and network connection.`);
+                        setLoading(false); // Must stop loading if initialization fails
+                    }
                 };
-              } else {
-                console.warn("EXISTING_FIREBASE_CONFIG is not fully set. Inventory and Sites from your existing database will not load.");
-                showUserModal("Please update EXISTING_FIREBASE_CONFIG in the code to connect to your inventory database. Inventory and Sites will not load until this is done.");
-                return () => { unsubscribeAuth(); };
-              }
+
+                initializeAndAuth();
+            }, []); // Empty dependency array means this runs once on mount
+
+            const login = (name) => {
+                logDebug("AuthContext.login: Attempting login with name:", name);
+                const currentFirebaseUid = ordersAuthRef.current?.currentUser?.uid;
+                // Use Firebase UID if available (from anonymous or custom token auth), otherwise generate a new random.
+                const newUid = currentFirebaseUid || crypto.randomUUID();
+
+                let newRole = 'orderer';
+                if (name.toLowerCase() === 'warehouse') {
+                    newRole = 'warehouse';
+                } else if (name.toLowerCase() === 'admin') {
+                    newRole = 'admin';
+                }
+
+                setRole(newRole);
+                setUser({ displayName: name, uid: newUid });
+                setUserId(newUid);
+                logDebug(`AuthContext.login: Logged in as ${newRole} with UID: ${newUid}`);
             };
 
-            initFirebaseApps();
-          }, []);
+            const logout = () => {
+                logDebug("AuthContext.logout: Attempting logout.");
+                ordersAuthRef.current.signOut().then(() => {
+                    setUser(null);
+                    setRole('orderer');
+                    setUserId(null); // Clear userId after logout
+                    logDebug("AuthContext.logout: Signed out successfully.");
+                }).catch(error => {
+                    console.error("AuthContext.logout: Error signing out:", error);
+                    setAuthError(`Logout failed: ${error.message}`);
+                });
+            };
 
-          useEffect(() => {
-            const storedUserName = localStorage.getItem('order_app_userName');
-            if (storedUserName) {
-              setUserName(storedUserName);
-            }
-            const storedIsAdmin = localStorage.getItem('order_app_isAdmin') === 'true';
-            setIsAdminMode(storedIsAdmin);
-            const storedIsWarehouse = localStorage.getItem('order_app_isWarehouse') === 'true';
-            setIsWarehouseMode(storedIsWarehouse);
-
-            if (storedIsAdmin) setCurrentPage('admin');
-            else if (storedIsWarehouse) setCurrentPage('warehouse');
-            else if (storedUserName) setCurrentPage('inventory');
-          }, []);
-
-          const handleLoginAttempt = (nameInput) => {
-            const lowerCaseName = nameInput.trim().toLowerCase();
-            if (lowerCaseName === 'warehouse') {
-              setIsWarehouseMode(true);
-              setIsAdminMode(false);
-              setUserName('Warehouse User');
-              localStorage.setItem('order_app_userName', 'Warehouse User');
-              localStorage.setItem('order_app_isWarehouse', 'true');
-              localStorage.setItem('order_app_isAdmin', 'false');
-              setCurrentPage('warehouse');
-            } else if (lowerCaseName === 'admin') {
-              setIsAdminMode(true);
-              setIsWarehouseMode(false);
-              setUserName('Admin User');
-              localStorage.setItem('order_app_userName', 'Admin User');
-              localStorage.setItem('order_app_isAdmin', 'true');
-              localStorage.setItem('order_app_isWarehouse', 'false');
-              setCurrentPage('admin');
-            } else {
-              setUserName(nameInput.trim());
-              setIsWarehouseMode(false);
-              setIsAdminMode(false);
-              localStorage.setItem('order_app_userName', nameInput.trim());
-              localStorage.setItem('order_app_isWarehouse', 'false');
-              localStorage.setItem('order_app_isAdmin', 'false');
-              setCurrentPage('inventory');
-            }
-          };
-
-          const handleAdminSaveInventoryItem = async (itemData) => {
-            if (!inventoryDb || !ordersAuth.currentUser) {
-              showUserModal('Inventory database not connected or not authenticated to perform this action.');
-              return false;
-            }
-
-            const WAREHOUSE_TRACKER_DATA_APP_ID = 'default-app-id';
-            const inventoryCollectionRef = inventoryDb.collection(`artifacts/${WAREHOUSE_TRACKER_DATA_APP_ID}/public/data/inventory`);
-
-            try {
-              if (itemData.id) {
-                const { id, ...dataToUpdate } = itemData;
-                await inventoryCollectionRef.doc(id).update(dataToUpdate);
-                logDebug('Item updated successfully in warehouse tracker!', itemData);
-                showUserModal('Item updated successfully in warehouse tracker!');
-              } else {
-                await inventoryCollectionRef.add(itemData);
-                logDebug('New item added to warehouse tracker!', itemData);
-                showUserModal('New item added to warehouse tracker!');
-              }
-              return true;
-            } catch (error) {
-              console.error("Error saving item to warehouse tracker:", error);
-              showUserModal(`Failed to save item to warehouse tracker: ${error.message}. Please check Firebase rules for 'dlv-warehouse-tracker' and authentication.`);
-              return false;
-            }
-          };
-
-          const handlePlaceSpecialOrder = async (orderData) => {
-            if (!ordersDb || !userId || !userName) {
-              showUserModal('Authentication or user name missing for placing order. Please refresh the page or log in.');
-              return false;
-            }
-
-            try {
-              const ordersAppIdForPath = ordersDb.app.options.projectId;
-              const ordersCollectionRef = ordersDb.collection(`artifacts/${ordersAppIdForPath}/orders`);
-              await ordersCollectionRef.add({
-                userId: userId,
-                userName: userName,
-                site: orderData.site,
-                items: orderData.items,
-                timestamp: firebase.firestore.FieldValue.serverTimestamp(),
-                status: 'Pending',
-                needsFollowUp: false,
-                lastFollowUpDate: null,
-                isSpecialOrder: true,
-                specialOrderNotes: orderData.specialOrderNotes || '',
-              });
-              logDebug('Special order placed successfully!', orderData);
-              showUserModal('Special order placed successfully!', null);
-              setCurrentPage('orders');
-              return true;
-            } catch (e) {
-              console.error("Error placing special order:", e);
-              showUserModal(`Failed to place special order: ${e.message}. Please try again.`);
-              return false;
-            }
-          };
-
-          if (!isAuthReady) {
             return (
-              <div className="flex items-center justify-center min-h-screen bg-gray-100 p-4">
-                <div className="flex flex-col items-center justify-center p-6 bg-white rounded-xl shadow-lg">
-                  <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-gray-900"></div>
-                  <p className="mt-4 text-lg font-semibold text-gray-700">Loading application...</p>
-                </div>
-              </div>
+                <AuthContext.Provider value={{
+                    user,
+                    role,
+                    userId, // This userId comes from Firebase Auth UID or random if auth fails
+                    login,
+                    logout,
+                    loading,
+                    authError,
+                    ordersDb: ordersDbRef.current, // Pass the orders Firestore instance
+                    ordersAuth: ordersAuthRef.current, // Pass the orders Auth instance
+                    CANVAS_APP_ID // Pass the app ID for collection paths
+                }}>
+                    {children}
+                </AuthContext.Provider>
             );
-          }
+        };
 
-          if (!userName && !isAdminMode && !isWarehouseMode) {
+        {/* --- Custom Modal for User Messages (replaces alert/confirm) --- */}
+        const UserModal = ({ message, type = 'info', onConfirm, onCancel, showCancel = false, onClose }) => {
+            if (!message) return null;
+
+            const bgColor = {
+                'info': 'bg-blue-100 border-blue-400 text-blue-700',
+                'success': 'bg-green-100 border-green-400 text-green-700',
+                'error': 'bg-red-100 border-red-400 text-red-700',
+                'confirm': 'bg-yellow-100 border-yellow-400 text-yellow-700'
+            }[type];
+
+            const buttonColor = {
+                'info': 'bg-blue-500 hover:bg-blue-600',
+                'success': 'bg-green-500 hover:bg-green-600',
+                'error': 'bg-red-500 hover:bg-red-600',
+                'confirm': 'bg-yellow-500 hover:bg-yellow-600'
+            }[type];
+
             return (
-              <LoginScreen onLoginAttempt={handleLoginAttempt} showUserModal={showUserModal} />
-            );
-          }
-
-          return (
-            <FirebaseContext.Provider value={{ 
-              ordersDb, 
-              ordersAuth, 
-              inventoryDb, 
-              userId, 
-              userName, 
-              showUserModal, 
-              allSites, 
-              isWarehouseMode, 
-              isAdminMode, 
-              cartItems, 
-              setCartItems, 
-              handleAdminSaveInventoryItem, 
-              inventory, 
-              setInventory, 
-              handlePlaceSpecialOrder 
-            }}>
-              <div className="min-h-screen bg-gray-100 font-sans text-gray-800 flex flex-col">
-                {/* Header */}
-                <header className="bg-gradient-to-r from-blue-600 to-indigo-700 text-white p-4 shadow-md">
-                  <div className="container mx-auto flex justify-between items-center">
-                    <h1 className="text-3xl font-bold tracking-tight">DLV Order Hub</h1>
-                    <nav>
-                      {!isAdminMode && !isWarehouseMode && (
-                        <>
-                          <button
-                            onClick={() => setCurrentPage('inventory')}
-                            className={`px-4 py-2 mx-2 rounded-lg transition-all duration-300 ${
-                              currentPage === 'inventory' ? 'bg-white text-blue-700 shadow-md' : 'hover:bg-blue-700'
-                            }`}
-                          >
-                            Inventory
-                          </button>
-                          <button
-                            onClick={() => setCurrentPage('cart')}
-                            className={`px-4 py-2 mx-2 rounded-lg transition-all duration-300 ${
-                              currentPage === 'cart' ? 'bg-white text-blue-700 shadow-md' : 'hover:bg-blue-700'
-                            }`}
-                          >
-                            My Cart
-                          </button>
-                          <button
-                            onClick={() => setCurrentPage('orders')}
-                            className={`px-4 py-2 mx-2 rounded-lg transition-all duration-300 ${
-                              currentPage === 'orders' ? 'bg-white text-blue-700 shadow-md' : 'hover:bg-blue-700'
-                            }`}
-                          >
-                            My Orders
-                          </button>
-                        </>
-                      )}
-                      {isWarehouseMode && (
-                        <button
-                          onClick={() => setCurrentPage('warehouse')}
-                          className={`px-4 py-2 mx-2 rounded-lg transition-all duration-300 ${
-                            currentPage === 'warehouse' ? 'bg-white text-blue-700 shadow-md' : 'hover:bg-blue-700'
-                          }`}
-                        >
-                          Warehouse Dashboard
-                        </button>
-                      )}
-                      {isAdminMode && (
-                        <button
-                          onClick={() => setCurrentPage('admin')}
-                          className={`px-4 py-2 mx-2 rounded-lg transition-all duration-300 ${
-                            currentPage === 'admin' ? 'bg-white text-blue-700 shadow-md' : 'hover:bg-blue-700'
-                          }`}
-                        >
-                          Admin Dashboard
-                        </button>
-                      )}
-                    </nav>
-                  </div>
-                </header>
-
-                {/* Main Content */}
-                <main className="container mx-auto p-6 flex-grow">
-                  {!isAdminMode && !isWarehouseMode ? (
-                    <ErrorBoundary>
-                      {currentPage === 'inventory' && <ProductList setCurrentPage={setCurrentPage} />}
-                      {currentPage === 'cart' && <Cart onGoToInventory={() => setCurrentPage('inventory')} onOrderPlacedSuccess={() => setCurrentPage('orders')} />}
-                      {currentPage === 'orders' && <OrderHistory />}
-                    </ErrorBoundary>
-                  ) : isWarehouseMode ? (
-                    <ErrorBoundary>
-                      <WarehouseDashboard />
-                    </ErrorBoundary>
-                  ) : (
-                    <ErrorBoundary>
-                      <AdminDashboard />
-                    </ErrorBoundary>
-                  )}
-                </main>
-
-                {/* Footer */}
-                <footer className="bg-gray-800 text-white p-4 text-center text-sm">
-                  <p>&copy; {new Date().getFullYear()} Electrical Contractor Business. All rights reserved.</p>
-                  {userId && (
-                    <p className="mt-1">
-                      Your User ID: <span className="font-mono bg-gray-700 px-2 py-1 rounded-md text-xs">{userId}</span>
-                    </p>
-                  )}
-                  {userName && (
-                    <p className="mt-1">
-                      Logged in as: <span className="font-mono bg-gray-700 px-2 py-1 rounded-md text-xs">{userName}</span>
-                    </p>
-                  )}
-                  {isWarehouseMode && (
-                    <p className="mt-1 text-green-400 font-bold">
-                      WAREHOUSE MODE ACTIVE
-                    </p>
-                  )}
-                  {isAdminMode && (
-                    <p className="mt-1 text-red-400 font-bold">
-                      ADMIN MODE ACTIVE
-                    </p>
-                  )}
-                </footer>
-
-                {/* Custom Modal */}
-                {showModal && (
-                  <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
-                    <div className="bg-white rounded-xl shadow-2xl p-6 w-full max-w-sm text-center">
-                      <h3 className="text-xl font-semibold text-gray-900 mb-4">Notification</h3>
-                      <p className="text-gray-700 mb-6">{modalMessage}</p>
-                      <div className="flex justify-center space-x-4">
-                        {modalOnConfirm ? (
-                          <>
-                            <button
-                              onClick={closeModal}
-                              className="px-6 py-2 bg-gray-300 text-gray-800 rounded-lg hover:bg-gray-400 transition-colors duration-200"
-                            >
-                              Cancel
-                            </button>
-                            <button
-                              onClick={handleModalConfirm}
-                              className="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors duration-200"
-                            >
-                              Confirm
-                            </button>
-                          </>
-                        ) : (
-                          <button
-                            onClick={closeModal}
-                            className="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors duration-200"
-                          >
-                            OK
-                          </button>
-                        )}
-                      </div>
+                <div className="fixed inset-0 bg-gray-600 bg-opacity-75 flex items-center justify-center p-4 z-50">
+                    <div className={`relative p-6 rounded-lg shadow-xl max-w-sm w-full border ${bgColor} text-center`}>
+                        <p className="mb-4 text-lg font-medium">{message}</p>
+                        <div className="flex justify-center space-x-4">
+                            {(type === 'confirm' || onConfirm) && (
+                                <button
+                                    onClick={() => { onConfirm && onConfirm(); onClose(); }}
+                                    className={`px-4 py-2 rounded-md text-white font-semibold transition-colors duration-200 ${buttonColor}`}
+                                >
+                                    OK
+                                </button>
+                            )}
+                            {showCancel && (
+                                <button
+                                    onClick={() => { onCancel && onCancel(); onClose(); }}
+                                    className="px-4 py-2 rounded-md bg-gray-300 hover:bg-gray-400 text-gray-800 font-semibold transition-colors duration-200"
+                                >
+                                    Cancel
+                                </button>
+                            )}
+                            {(!onConfirm && !showCancel) && ( // For simple info/success/error modals
+                                <button
+                                    onClick={onClose}
+                                    className={`px-4 py-2 rounded-md text-white font-semibold transition-colors duration-200 ${buttonColor}`}
+                                >
+                                    Close
+                                </button>
+                            )}
+                        </div>
                     </div>
-                  </div>
-                )}
-              </div>
-            </FirebaseContext.Provider>
-          );
-        };
-
-        // Login Screen Component
-        const LoginScreen = ({ onLoginAttempt, showUserModal }) => {
-          const [name, setName] = useState('');
-
-          const handleSubmit = (e) => {
-            e.preventDefault();
-            if (name.trim()) {
-              onLoginAttempt(name.trim());
-            } else {
-              showUserModal('Please enter your name to proceed.');
-            }
-          };
-
-          return (
-            <div className="flex items-center justify-center min-h-screen bg-gray-100 p-4">
-              <div className="bg-white rounded-xl shadow-lg p-8 w-full max-w-md text-center">
-                <h2 className="text-3xl font-bold text-gray-900 mb-6">Welcome to DLV Order Hub</h2>
-                <p className="text-gray-700 mb-6">Please enter your name to continue.</p>
-                <p className="text-sm text-gray-500 mb-4">
-                  (Type "warehouse" for Warehouse access, "admin" for Admin access)
-                </p>
-                <form onSubmit={handleSubmit} className="space-y-4">
-                  <input
-                    type="text"
-                    placeholder="Your Name / Role (e.g., John Doe, warehouse, admin)"
-                    value={name}
-                    onChange={(e) => setName(e.target.value)}
-                    className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-blue-500 focus:border-blue-500 text-lg"
-                    required
-                  />
-                  <button
-                    type="submit"
-                    className="w-full bg-blue-600 text-white py-3 rounded-lg shadow-md hover:bg-blue-700 transition-colors duration-300 font-semibold text-lg"
-                  >
-                    Enter DLV Order Hub
-                  </button>
-                </form>
-              </div>
-            </div>
-          );
-        };
-
-        // Admin Item Edit Form Component
-        const AdminInventoryItemForm = ({ item, onSave, onClose, showUserModal }) => {
-          const [localItem, setLocalItem] = useState({
-            name: item?.name || '',
-            brand: item?.brand || '',
-            qty: item?.qty || 0,
-            location: item?.location || '',
-            sku: item?.sku || `SKU-${Date.now()}`,
-            price: item?.price || 0.00,
-            reorderLevel: item?.reorderLevel || 10,
-            imageUrl: item?.imageUrl || '',
-            description: item?.description || '',
-          });
-          const [isSaving, setIsSaving] = useState(false);
-
-          const handleChange = (e) => {
-            const { name, value } = e.target;
-            setLocalItem(prev => ({ ...prev, [name]: value }));
-          };
-
-          const handleSubmit = async (e) => {
-            e.preventDefault();
-            if (!localItem.name || !localItem.sku) {
-              showUserModal('SKU and Item Name are required.');
-              return;
-            }
-            setIsSaving(true);
-            const success = await onSave({ id: item?.id, ...localItem });
-            setIsSaving(false);
-            if (success) {
-              onClose();
-            }
-          };
-
-          return (
-            <div className="bg-white rounded-xl shadow-lg p-6">
-              <h2 className="text-2xl font-bold text-gray-900 mb-6">{item ? 'Edit Inventory Item' : 'Add New Inventory Item'}</h2>
-              <form onSubmit={handleSubmit} className="space-y-4">
-                <div>
-                  <label className="block text-sm font-semibold text-gray-700 mb-1">SKU</label>
-                  <input
-                    type="text"
-                    name="sku"
-                    value={localItem.sku}
-                    onChange={handleChange}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg bg-gray-100"
-                    readOnly={true}
-                    required
-                  />
                 </div>
-                <div>
-                  <label className="block text-sm font-semibold text-gray-700 mb-1">Item Name</label>
-                  <input
-                    type="text"
-                    name="name"
-                    value={localItem.name}
-                    onChange={handleChange}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg"
-                    readOnly={true}
-                    required
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm font-semibold text-gray-700 mb-1">Description</label>
-                  <textarea
-                    name="description"
-                    value={localItem.description}
-                    onChange={handleChange}
-                    rows="3"
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg"
-                  ></textarea>
-                </div>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                  <div>
-                    <label className="block text-sm font-semibold text-gray-700 mb-1">Brand</label>
-                    <input
-                      type="text"
-                      name="brand"
-                      value={localItem.brand}
-                      onChange={handleChange}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg"
-                      readOnly={true}
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-sm font-semibold text-gray-700 mb-1">Location</label>
-                    <input
-                      type="text"
-                      name="location"
-                      value={localItem.location}
-                      onChange={handleChange}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg"
-                      readOnly={true}
-                    />
-                  </div>
-                </div>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                  <div>
-                    <label className="block text-sm font-semibold text-gray-700 mb-1">Price</label>
-                    <input
-                      type="number"
-                      step="0.01"
-                      name="price"
-                      value={localItem.price}
-                      onChange={handleChange}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg"
-                      readOnly={true}
-                      required
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-sm font-semibold text-gray-700 mb-1">Reorder Level</label>
-                    <input
-                      type="number"
-                      name="reorderLevel"
-                      value={localItem.reorderLevel}
-                      onChange={handleChange}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg"
-                      readOnly={true}
-                      required
-                    />
-                  </div>
-                </div>
-                <div>
-                  <label className="block text-sm font-semibold text-gray-700 mb-1">Current Quantity (Adjust with Stock Adjustment feature)</label>
-                  <input
-                    type="number"
-                    name="qty"
-                    value={localItem.qty}
-                    readOnly={true}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg bg-gray-100"
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm font-semibold text-gray-700 mb-1">Image URL</label>
-                  <input
-                    type="url"
-                    name="imageUrl"
-                    value={localItem.imageUrl}
-                    onChange={handleChange}
-                    placeholder="Paste image URL here (e.g., https://example.com/image.jpg)"
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg"
-                  />
-                  {localItem.imageUrl && (
-                    <img src={localItem.imageUrl} alt="Item Preview" className="mt-2 max-h-24 object-contain rounded-md" onError={(e) => e.target.style.display='none'} />
-                  )}
-                </div>
-
-                <div className="flex justify-end space-x-4 mt-6">
-                  <button
-                    type="button"
-                    onClick={onClose}
-                    className="px-6 py-2 bg-gray-300 text-gray-800 rounded-lg hover:bg-gray-400 transition-colors duration-200"
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    type="submit"
-                    disabled={isSaving}
-                    className="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors duration-200 disabled:opacity-50"
-                  >
-                    {isSaving ? 'Saving...' : (item ? 'Save Changes' : 'Add Item')}
-                  </button>
-                </div>
-              </form>
-            </div>
-          );
-        };
-
-        // Component for Special Orders
-        const SpecialOrderForm = ({ onPlaceSpecialOrder, onClose, showUserModal, allSites }) => {
-          const [specialOrderText, setSpecialOrderText] = useState('');
-          const [selectedSite, setSelectedSite] = useState('');
-          const [isSaving, setIsSaving] = useState(false);
-
-          const handleSubmit = async (e) => {
-            e.preventDefault();
-            if (!specialOrderText.trim() || !selectedSite.trim()) {
-              showUserModal('Please provide details for the special order and select a Site.');
-              return;
-            }
-
-            setIsSaving(true);
-            const success = await onPlaceSpecialOrder({
-              site: selectedSite,
-              items: [{
-                name: 'Special Order',
-                description: specialOrderText.trim(),
-                quantity: 1,
-                status: 'Pending',
-              }],
-              specialOrderNotes: specialOrderText.trim(),
-            });
-            setIsSaving(false);
-            if (success) {
-              onClose();
-            }
-          };
-
-          return (
-            <div className="bg-white rounded-xl shadow-lg p-6">
-              <h2 className="text-2xl font-bold text-gray-900 mb-6">Request Special Order</h2>
-              <form onSubmit={handleSubmit} className="space-y-4">
-                <div>
-                  <label className="block text-sm font-semibold text-gray-700 mb-1">Details of Special Order (e.g., "Custom cable, 50m, 16 AWG")</label>
-                  <textarea value={specialOrderText} onChange={(e) => setSpecialOrderText(e.target.value)}
-                            rows="4" className="w-full px-3 py-2 border border-gray-300 rounded-lg" required></textarea>
-                </div>
-                <div>
-                  <label htmlFor="site-select-special" className="block text-sm font-semibold text-gray-700 mb-1">Project Site/Location</label>
-                  <select
-                    id="site-select-special"
-                    value={selectedSite}
-                    onChange={(e) => setSelectedSite(e.target.value)}
-                    className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-blue-500 focus:border-blue-500 text-lg bg-white"
-                    required
-                  >
-                    <option value="">-- Select a Site --</option>
-                    {allSites.map((siteName, index) => (
-                      <option key={index} value={siteName}>{siteName}</option>
-                    ))}
-                  </select>
-                  {allSites.length === 0 && (
-                      <p className="text-sm text-red-500 mt-2">No sites loaded. Check your EXISTING_FIREBASE_CONFIG and Firebase rules for the sites collection.</p>
-                  )}
-                </div>
-                <div className="flex justify-end space-x-4 mt-6">
-                  <button type="button" onClick={onClose}
-                          className="px-6 py-2 bg-gray-300 text-gray-800 rounded-lg hover:bg-gray-400 transition-colors duration-200">
-                    Cancel
-                  </button>
-                  <button type="submit" disabled={isSaving}
-                          className="px-6 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors duration-200 disabled:opacity-50">
-                    {isSaving ? 'Submitting...' : 'Submit Special Order'}
-                  </button>
-                </div>
-              </form>
-            </div>
-          );
-        };
-
-        // Component to list all available products/inventory items
-        const ProductList = ({ setCurrentPage }) => {
-          const { inventory, showUserModal, cartItems, setCartItems } = useContext(FirebaseContext);
-          const [loading, setLoading] = useState(false);
-          const [error, setError] = useState(null);
-          const [showQuantityModal, setShowQuantityModal] = useState(false);
-          const [selectedItemForQty, setSelectedItemForQty] = useState(null);
-          const [inputQuantity, setInputQuantity] = useState(1);
-
-          const handleAddToCartClick = (item) => {
-            setSelectedItemForQty(item);
-            setInputQuantity(cartItems[item.id] || 1);
-            setShowQuantityModal(true);
-          };
-
-          const confirmAddToCart = () => {
-            if (inputQuantity <= 0) {
-              showUserModal('Quantity must be greater than 0.');
-              return;
-            }
-            setCartItems(prevCart => {
-              const updatedCart = {
-                ...prevCart,
-                [selectedItemForQty.id]: inputQuantity
-              };
-              sessionStorage.setItem('order_app_cart', JSON.stringify(updatedCart));
-              showUserModal(`${selectedItemForQty.name} added to cart! Quantity: ${inputQuantity}`);
-              setShowQuantityModal(false);
-              setSelectedItemForQty(null);
-              setInputQuantity(1);
-              return updatedCart;
-            });
-          };
-
-          const closeQuantityModal = () => {
-            setShowQuantityModal(false);
-            setSelectedItemForQty(null);
-            setInputQuantity(1);
-          };
-
-          if (loading) {
-            return (
-              <div className="flex items-center justify-center py-10">
-                <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-blue-600"></div>
-                <p className="ml-4 text-lg text-gray-600">Loading inventory...</p>
-              </div>
             );
-          }
+        };
 
-          if (error) {
+        {/* --- Error Boundary Component --- */}
+        class ErrorBoundary extends React.Component {
+            constructor(props) {
+                super(props);
+                this.state = { hasError: false, error: null, errorInfo: null };
+            }
+
+            static getDerivedStateFromError(error) {
+                return { hasError: true, error };
+            }
+
+            componentDidCatch(error, errorInfo) {
+                console.error("ErrorBoundary caught an error:", error, errorInfo);
+                this.setState({ errorInfo });
+            }
+
+            render() {
+                if (this.state.hasError) {
+                    return (
+                        <div className="flex flex-col items-center justify-center min-h-screen bg-red-50 text-red-800 p-6 rounded-lg shadow-md m-4">
+                            <h1 className="text-3xl font-bold mb-4">Oops! Something went wrong.</h1>
+                            <p className="text-lg text-center mb-4">We're sorry for the inconvenience. Please try refreshing the page.</p>
+                            {DEBUG_MODE && this.state.error && (
+                                <div className="bg-red-100 p-4 rounded-md text-sm text-left w-full max-w-2xl overflow-auto">
+                                    <h2 className="font-semibold mb-2">Error Details:</h2>
+                                    <pre className="whitespace-pre-wrap break-words">{this.state.error.toString()}</pre>
+                                    <h2 className="font-semibold mt-4 mb-2">Component Stack:</h2>
+                                    <pre className="whitespace-pre-wrap break-words">{this.state.errorInfo?.componentStack}</pre>
+                                </div>
+                            )}
+                        </div>
+                    );
+                }
+                return this.props.children;
+            }
+        }
+
+        {/* --- Main App Component --- */}
+        const App = () => {
+            // Destructure login from AuthContext here, once, in the component body
+            const { user, role, userId, logout, loading, authError, ordersDb, ordersAuth, CANVAS_APP_ID, login } = useContext(AuthContext);
+            const [currentPage, setCurrentPage] = useState('inventory'); // 'inventory', 'cart', 'orderHistory', 'orderManagement'
+            const [modalMessage, setModalMessage] = useState('');
+            const [modalType, setModalType] = useState('info');
+            const [modalConfirmCallback, setModalConfirmCallback] = useState(null);
+            const [modalCancelCallback, setModalCancelCallback] = useState(null);
+            const [showModalCancel, setShowModalCancel] = useState(false);
+
+            // Existing Firebase (warehouse-tracker) instances
+            const warehouseAppRef = useRef(null);
+            const warehouseDbRef = useRef(null);
+
+            useEffect(() => {
+                logDebug("App: Initializing dlv-warehouse-tracker Firebase...");
+                try {
+                    warehouseAppRef.current = initializeApp(EXISTING_FIREBASE_CONFIG, "warehouseApp"); // Give it a unique name
+                    warehouseDbRef.current = getFirestore(warehouseAppRef.current);
+                    logDebug("App: Firebase app for dlv-warehouse-tracker initialized.");
+                } catch (error) {
+                    console.error("App: Error initializing warehouse-tracker Firebase:", error);
+                    showUserModal(`Failed to connect to inventory database: ${error.message}`, "error");
+                }
+            }, []);
+
+            const showUserModal = (message, type = 'info', onConfirm = null, onCancel = null, showCancel = false) => {
+                setModalMessage(message);
+                setModalType(type);
+                setModalConfirmCallback(() => onConfirm); // Use function to prevent direct call
+                setModalCancelCallback(() => onCancel);
+                setShowModalCancel(showCancel);
+            };
+
+            const closeUserModal = () => {
+                setModalMessage('');
+                setModalType('info');
+                setModalConfirmCallback(null);
+                setModalCancelCallback(null);
+                setShowModalCancel(false);
+            };
+
+            if (loading) {
+                logDebug("App: Displaying loading screen.");
+                return (
+                    <div className="flex items-center justify-center min-h-screen bg-gray-100">
+                        <div className="animate-spin rounded-full h-16 w-16 border-t-4 border-b-4 border-blue-500"></div>
+                        <p className="ml-4 text-xl text-gray-700">Loading application...</p>
+                    </div>
+                );
+            }
+
+            // Only display authError if loading is false (meaning all auth attempts are done)
+            if (authError && !loading) {
+                logDebug("App: Displaying authentication error screen. Error:", authError);
+                return (
+                    <div className="flex flex-col items-center justify-center min-h-screen bg-red-50 text-red-800 p-6 rounded-lg shadow-md m-4">
+                        <h1 className="text-3xl font-bold mb-4">Authentication Error!</h1>
+                        <p className="text-lg text-center mb-4">{authError}</p>
+                        <p className="text-md">Please check your Firebase configuration and network connection.</p>
+                    </div>
+                );
+            }
+
+            // Render login screen if user is not logged in (user.displayName is used for simple login)
+            if (!user || !user.displayName) {
+                logDebug("App: Displaying LoginScreen. User state:", user);
+                // Pass the 'login' function directly from AuthContext to LoginScreen
+                return <LoginScreen onLogin={login} />;
+            }
+
+            const headerNavItems = [
+                { id: 'inventory', label: 'Inventory', roles: ['orderer', 'warehouse', 'admin'] },
+                { id: 'cart', label: 'My Cart', roles: ['orderer'] },
+                { id: 'orderHistory', label: 'My Orders', roles: ['orderer'] },
+                { id: 'orderManagement', label: 'Order Management', roles: ['warehouse', 'admin'] },
+            ];
+
             return (
-              <div className="text-center py-10 text-red-600">
-                <p className="text-xl font-semibold">Error:</p>
-                <p>{error}</p>
-                <p className="mt-4 text
+                <div className="min-h-screen flex flex-col">
+                    {/* Header */}
+                    <header className="bg-gray-800 text-white p-4 shadow-md">
+                        <div className="container mx-auto flex flex-col sm:flex-row justify-between items-center">
+                            <h1 className="text-3xl font-bold mb-2 sm:mb-0">DLV Order Hub</h1>
+                            <nav className="flex flex-wrap justify-center sm:space-x-4 mb-2 sm:mb-0">
+                                {headerNavItems.map(item =>
+                                    item.roles.includes(role) && (
+                                        <button
+                                            key={item.id}
+                                            onClick={() => setCurrentPage(item.id)}
+                                            className={`px-4 py-2 rounded-md transition-colors duration-200 m-1
+                                                        ${currentPage === item.id ? 'bg-blue-600' : 'hover:bg-gray-700'}`}
+                                        >
+                                            {item.label}
+                                        </button>
+                                    )
+                                )}
+                            </nav>
+                            <div className="flex items-center space-x-4">
+                                <span className="text-lg font-medium">
+                                    Logged in as: {user.displayName} ({role})
+                                </span>
+                                {userId && <span className="text-sm">User ID: {userId}</span>}
+                                <button
+                                    onClick={logout}
+                                    className="px-4 py-2 bg-red-600 rounded-md hover:bg-red-700 transition-colors duration-200"
+                                >
+                                    Logout
+                                </button>
+                            </div>
+                        </div>
+                    </header>
+
+                    {/* Main Content */}
+                    <main className="flex-grow container mx-auto p-4 bg-white rounded-lg shadow-lg my-4">
+                        {currentPage === 'inventory' && (
+                            <InventoryPage
+                                warehouseDb={warehouseDbRef.current}
+                                ordersDb={ordersDb}
+                                showUserModal={showUserModal}
+                                role={role}
+                                userId={userId}
+                            />
+                        )}
+                        {currentPage === 'cart' && role === 'orderer' && (
+                            <CartPage
+                                ordersDb={ordersDb}
+                                showUserModal={showUserModal}
+                                userId={userId}
+                                userDisplayName={user.displayName}
+                                warehouseDb={warehouseDbRef.current}
+                            />
+                        )}
+                        {currentPage === 'orderHistory' && role === 'orderer' && (
+                            <OrderHistoryPage
+                                ordersDb={ordersDb}
+                                showUserModal={showUserModal}
+                                userId={userId}
+                            />
+                        )}
+                        {currentPage === 'orderManagement' && (role === 'warehouse' || role === 'admin') && (
+                            <OrderManagementPage
+                                ordersDb={ordersDb}
+                                showUserModal={showUserModal}
+                                userId={userId}
+                            />
+                        )}
+                    </main>
+
+                    {/* Footer */}
+                    <footer className="bg-gray-800 text-white p-4 text-center mt-auto">
+                        <p>&copy; {new Date().getFullYear()} DLV Order Hub. All rights reserved.</p>
+                    </footer>
+
+                    {/* User Modal */}
+                    <UserModal
+                        message={modalMessage}
+                        type={modalType}
+                        onConfirm={modalConfirmCallback}
+                        onCancel={modalCancelCallback}
+                        showCancel={showModalCancel}
+                        onClose={closeUserModal}
+                    />
+                </div>
+            );
+        };
+
+        {/* Login Screen Component */}
+        const LoginScreen = ({ onLogin }) => {
+            const [name, setName] = useState('');
+
+            const handleSubmit = (e) => {
+                e.preventDefault();
+                if (name.trim()) {
+                    onLogin(name.trim());
+                }
+            };
+
+            return (
+                <div className="flex items-center justify-center min-h-screen bg-gradient-to-r from-blue-500 to-indigo-600 p-4">
+                    <div className="bg-white p-8 rounded-xl shadow-2xl w-full max-w-md text-center transform hover:scale-105 transition-transform duration-300">
+                        <h2 className="text-4xl font-extrabold text-gray-900 mb-6">Welcome to DLV Order Hub</h2>
+                        <p className="text-gray-600 mb-8 text-lg">Please log in to continue.</p>
+                        <form onSubmit={handleSubmit} className="space-y-6">
+                            <div>
+                                <label htmlFor="name" className="sr-only">Your Name</label>
+                                <input
+                                    type="text"
+                                    id="name"
+                                    value={name}
+                                    onChange={(e) => setName(e.target.value)}
+                                    placeholder="Enter your name (e.g., John Doe, warehouse, admin)"
+                                    className="w-full px-5 py-3 border border-gray-300 rounded-lg shadow-sm focus:ring-blue-500 focus:border-blue-500 text-lg placeholder-gray-500"
+                                    required
+                                />
+                            </div>
+                            <button
+                                type="submit"
+                                className="w-full bg-blue-600 text-white py-3 px-6 rounded-lg text-xl font-semibold hover:bg-blue-700 transition-colors duration-300 transform hover:-translate-y-1 shadow-lg"
+                            >
+                                Log In
+                            </button>
+                        </form>
+                        <p className="mt-8 text-gray-500 text-sm">
+                            Use "warehouse" or "admin" for special access.
+                        </p>
+                    </div>
+                </div>
+            );
+        };
+
+        {/* Inventory Page Component */}
+        const InventoryPage = ({ warehouseDb, ordersDb, showUserModal, role, userId }) => {
+            const [inventory, setInventory] = useState([]);
+            const [loading, setLoading] = useState(true);
+            const [error, setError] = useState(null);
+            const [isAddItemModalOpen, setIsAddItemModalOpen] = useState(false);
+            const [selectedItem, setSelectedItem] = useState(null);
+            const [quantity, setQuantity] = useState(1);
+            const [cart, setCart] = useState(JSON.parse(sessionStorage.getItem('dlv_cart')) || []);
+            const [isEditModalOpen, setIsEditModalOpen] = useState(false);
+            const [editItemData, setEditItemData] = useState(null);
+            const [searchTerm, setSearchTerm] = useState('');
+
+            // Fetch inventory data from the EXISTING_FIREBASE_CONFIG (dlv-warehouse-tracker)
+            useEffect(() => {
+                logDebug("InventoryPage: Fetching inventory data...");
+                if (!warehouseDb) {
+                    showUserModal("Inventory database not initialized.", "error");
+                    setLoading(false);
+                    return;
+                }
+
+                const inventoryColRef = collection(warehouseDb, `artifacts/${WAREHOUSE_TRACKER_DATA_APP_ID}/public/data/inventory`);
+                const q = query(inventoryColRef);
+
+                const unsubscribe = onSnapshot(q, (snapshot) => {
+                    logDebug("InventoryPage: Inventory snapshot received.");
+                    const items = snapshot.docs.map(doc => ({
+                        id: doc.id,
+                        ...doc.data()
+                    }));
+                    setInventory(items);
+                    setLoading(false);
+                    logDebug("InventoryPage: Inventory data loaded, loading set to false.");
+                }, (err) => {
+                    console.error("InventoryPage: Error fetching inventory:", err);
+                    setError(err);
+                    showUserModal(`Failed to load inventory: ${err.message}`, "error");
+                    setLoading(false);
+                });
+
+                return () => unsubscribe();
+            }, [warehouseDb]);
+
+            // Sync cart with sessionStorage on updates
+            useEffect(() => {
+                sessionStorage.setItem('dlv_cart', JSON.stringify(cart));
+            }, [cart]);
+
+            const handleAddItemClick = (item) => {
+                setSelectedItem(item);
+                setQuantity(1); // Reset quantity
+                setIsAddItemModalOpen(true);
+            };
+
+            const handleAddToCart = () => {
+                if (!selectedItem || quantity <= 0) {
+                    showUserModal("Please select a valid quantity.", "error");
+                    return;
+                }
+
+                const existingItemIndex = cart.findIndex(item => item.id === selectedItem.id);
+                if (existingItemIndex > -1) {
+                    const newCart = [...cart];
+                    newCart[existingItemIndex].quantity += quantity;
+                    setCart(newCart);
+                } else {
+                    setCart([...cart, { ...selectedItem, quantity }]);
+                }
+                showUserModal(`${quantity}x ${selectedItem.name} added to cart!`, "success");
+                setIsAddItemModalOpen(false);
+            };
+
+            const handleEditClick = (item) => {
+                setEditItemData(item);
+                setIsEditModalOpen(true);
+            };
+
+            const handleUpdateInventory = async (itemId, updatedData) => {
+                logDebug("InventoryPage: Attempting to update inventory item:", itemId, updatedData);
+                if (!ordersDb) {
+                    showUserModal("Orders database not initialized for inventory updates.", "error");
+                    return;
+                }
+                if (role !== 'admin') {
+                    showUserModal("You do not have permission to edit inventory.", "error");
+                    return;
+                }
+
+                setLoading(true);
+                try {
+                    const docRef = doc(warehouseDb, `artifacts/${WAREHOUSE_TRACKER_DATA_APP_ID}/public/data/inventory`, itemId);
+                    await updateDoc(docRef, updatedData);
+                    showUserModal("Inventory item updated successfully!", "success");
+                    setIsEditModalOpen(false);
+                    logDebug("InventoryPage: Inventory item updated successfully.");
+                } catch (err) {
+                    console.error("InventoryPage: Error updating inventory:", err);
+                    showUserModal(`Failed to update inventory: ${err.message}`, "error");
+                } finally {
+                    setLoading(false);
+                }
+            };
+
+            const filteredInventory = inventory.filter(item =>
+                item.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+                (item.description && item.description.toLowerCase().includes(searchTerm.toLowerCase()))
+            );
+
+            if (loading) {
+                return <div className="text-center py-8">Loading inventory...</div>;
+            }
+
+            if (error) {
+                return <div className="text-center py-8 text-red-500">Error: {error.message}</div>;
+            }
+
+            return (
+                <div className="p-4">
+                    <h2 className="text-3xl font-bold mb-6 text-gray-800">Inventory</h2>
+
+                    <div className="mb-6 flex flex-col sm:flex-row justify-between items-center">
+                        <input
+                            type="text"
+                            placeholder="Search inventory..."
+                            value={searchTerm}
+                            onChange={(e) => setSearchTerm(e.target.value)}
+                            className="w-full sm:w-1/3 p-3 border border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 mb-4 sm:mb-0"
+                        />
+                        {role === 'orderer' && <MiniCartPreview cart={cart} />}
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
+                        {filteredInventory.map(item => (
+                            <div key={item.id} className="bg-white border border-gray-200 rounded-lg shadow-md hover:shadow-lg transition-shadow duration-300 p-4 flex flex-col">
+                                <img
+                                    src={item.imageUrl || `https://placehold.co/150x150/e0e0e0/000000?text=No+Image`}
+                                    alt={item.name}
+                                    className="w-full h-40 object-contain rounded-md mb-4 bg-gray-100"
+                                    onError={(e) => { e.target.onerror = null; e.target.src = `https://placehold.co/150x150/e0e0e0/000000?text=Image+Error`; }}
+                                />
+                                <h3 className="text-xl font-semibold text-gray-900 mb-2">{item.name}</h3>
+                                <p className="text-gray-600 text-sm mb-3 flex-grow">{item.description || 'No description provided.'}</p>
+                                <div className="flex items-center justify-between mt-auto pt-2 border-t border-gray-100">
+                                    <span className={`text-lg font-bold ${item.stock === 0 ? 'text-red-600' : 'text-green-700'}`}>
+                                        Stock: {item.stock || 0}
+                                    </span>
+                                    {(role === 'orderer') && (
+                                        <button
+                                            onClick={() => handleAddItemClick(item)}
+                                            className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors duration-200 text-sm font-medium"
+                                        >
+                                            <i className="fas fa-cart-plus mr-2"></i>Add to Cart
+                                        </button>
+                                    )}
+                                    {role === 'admin' && (
+                                        <button
+                                            onClick={() => handleEditClick(item)}
+                                            className="px-4 py-2 bg-yellow-500 text-white rounded-md hover:bg-yellow-600 transition-colors duration-200 text-sm font-medium"
+                                        >
+                                            <i className="fas fa-edit mr-2"></i>Edit
+                                        </button>
+                                    )}
+                                </div>
+                            </div>
+                        ))}
+                    </div>
+
+                    {/* Add Item to Cart Modal */}
+                    {isAddItemModalOpen && selectedItem && (
+                        <div className="fixed inset-0 bg-gray-600 bg-opacity-75 flex items-center justify-center p-4 z-50">
+                            <div className="bg-white p-8 rounded-lg shadow-xl w-full max-w-md">
+                                <h3 className="text-2xl font-bold mb-4 text-gray-900">Add {selectedItem.name} to Cart</h3>
+                                <div className="mb-4">
+                                    <label htmlFor="quantity" className="block text-gray-700 text-lg font-medium mb-2">Quantity:</label>
+                                    <input
+                                        type="number"
+                                        id="quantity"
+                                        value={quantity}
+                                        onChange={(e) => setQuantity(Math.max(1, parseInt(e.target.value) || 1))}
+                                        min="1"
+                                        className="w-full px-4 py-2 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500 text-lg"
+                                    />
+                                </div>
+                                <div className="flex justify-end space-x-4">
+                                    <button
+                                        onClick={() => setIsAddItemModalOpen(false)}
+                                        className="px-6 py-2 bg-gray-300 text-gray-800 rounded-md hover:bg-gray-400 transition-colors duration-200 font-semibold"
+                                >
+                                        Cancel
+                                    </button>
+                                    <button
+                                        onClick={handleAddToCart}
+                                        className="px-6 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors duration-200 font-semibold"
+                                    >
+                                        Add to Cart
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+
+                    {/* Admin Inventory Edit Modal */}
+                    {isEditModalOpen && editItemData && (
+                        <AdminInventoryEditModal
+                            item={editItemData}
+                            onClose={() => setIsEditModalOpen(false)}
+                            onSave={handleUpdateInventory}
+                            showUserModal={showUserModal}
+                        />
+                    )}
+                </div>
+            );
+        };
+
+        {/* Mini Cart Preview Component */}
+        const MiniCartPreview = ({ cart }) => {
+            const totalItems = cart.reduce((sum, item) => sum + item.quantity, 0);
+
+            if (totalItems === 0) {
+                return (
+                    <div className="flex items-center space-x-2 text-gray-600">
+                        <i className="fas fa-shopping-cart text-xl"></i>
+                        <span>Cart is Empty</span>
+                    </div>
+                );
+            }
+
+            return (
+                <div className="flex items-center space-x-2 text-blue-700 font-semibold">
+                    <i className="fas fa-shopping-cart text-xl"></i>
+                    <span>{totalItems} items in cart</span>
+                </div>
+            );
+        };
+
+        {/* Admin Inventory Edit Modal Component */}
+        const AdminInventoryEditModal = ({ item, onClose, onSave, showUserModal }) => {
+            const [description, setDescription] = useState(item.description || '');
+            const [imageUrl, setImageUrl] = useState(item.imageUrl || '');
+            const [stock, setStock] = useState(item.stock || 0);
+
+            const handleSubmit = (e) => {
+                e.preventDefault();
+                // Confirmation before saving changes
+                showUserModal(
+                    `Are you sure you want to update "${item.name}"?`,
+                    'confirm',
+                    () => onSave(item.id, { description, imageUrl, stock: parseInt(stock) }),
+                    null,
+                    true
+                );
+            };
+
+            return (
+                <div className="fixed inset-0 bg-gray-600 bg-opacity-75 flex items-center justify-center p-4 z-50">
+                    <div className="bg-white p-8 rounded-lg shadow-xl w-full max-w-lg">
+                        <h3 className="text-2xl font-bold mb-6 text-gray-900">Edit Inventory Item: {item.name}</h3>
+                        <form onSubmit={handleSubmit} className="space-y-4">
+                            <div>
+                                <label htmlFor="editDescription" className="block text-gray-700 font-medium mb-1">Description:</label>
+                                <textarea
+                                    id="editDescription"
+                                    value={description}
+                                    onChange={(e) => setDescription(e.target.value)}
+                                    rows="3"
+                                    className="w-full px-4 py-2 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500"
+                                />
+                            </div>
+                            <div>
+                                <label htmlFor="editImageUrl" className="block text-gray-700 font-medium mb-1">Image URL:</label>
+                                <input
+                                    type="url"
+                                    id="editImageUrl"
+                                    value={imageUrl}
+                                    onChange={(e) => setImageUrl(e.target.value)}
+                                    className="w-full px-4 py-2 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500"
+                                />
+                                {imageUrl && (
+                                    <img src={imageUrl} alt="Preview" className="mt-2 w-24 h-24 object-contain border rounded-md" />
+                                )}
+                            </div>
+                            <div>
+                                <label htmlFor="editStock" className="block text-gray-700 font-medium mb-1">Stock Quantity:</label>
+                                <input
+                                    type="number"
+                                    id="editStock"
+                                    value={stock}
+                                    onChange={(e) => setStock(Math.max(0, parseInt(e.target.value) || 0))}
+                                    min="0"
+                                    className="w-full px-4 py-2 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500"
+                                />
+                            </div>
+                            <div className="flex justify-end space-x-4 pt-4">
+                                <button
+                                    type="button"
+                                    onClick={onClose}
+                                    className="px-6 py-2 bg-gray-300 text-gray-800 rounded-md hover:bg-gray-400 transition-colors duration-200 font-semibold"
+                                >
+                                    Cancel
+                                </button>
+                                <button
+                                    type="submit"
+                                    className="px-6 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors duration-200 font-semibold"
+                                >
+                                    Save Changes
+                                </button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            );
+        };
+
+
+        {/* Cart Page Component */}
+        const CartPage = ({ ordersDb, showUserModal, userId, userDisplayName, warehouseDb }) => {
+            const [cart, setCart] = useState(JSON.parse(sessionStorage.getItem('dlv_cart')) || []);
+            const [specialRequest, setSpecialRequest] = useState('');
+            const [projectSites, setProjectSites] = useState([]);
+            const [selectedSite, setSelectedSite] = useState('');
+            const [loadingSites, setLoadingSites] = useState(true);
+
+            useEffect(() => {
+                logDebug("CartPage: Fetching project sites...");
+                // Fetch project sites from dlv-warehouse-tracker
+                const fetchSites = async () => {
+                    if (!warehouseDb) {
+                        showUserModal("Site database not initialized.", "error");
+                        setLoadingSites(false);
+                        return;
+                    }
+                    try {
+                        const sitesColRef = collection(warehouseDb, `artifacts/${WAREHOUSE_TRACKER_DATA_APP_ID}/public/data/sites`);
+                        const q = query(sitesColRef);
+                        const querySnapshot = await getDocs(q);
+                        const sites = querySnapshot.docs.map(doc => doc.data().name).filter(Boolean); // Assuming 'name' field
+                        setProjectSites(sites);
+                        if (sites.length > 0) {
+                            setSelectedSite(sites[0]); // Select first site by default
+                        }
+                        logDebug("CartPage: Project sites loaded.", sites);
+                    } catch (err) {
+                        console.error("CartPage: Error fetching project sites:", err);
+                        showUserModal(`Failed to load project sites: ${err.message}`, "error");
+                    } finally {
+                        setLoadingSites(false);
+                    }
+                };
+                fetchSites();
+            }, [warehouseDb]);
+
+            // Sync cart with sessionStorage
+            useEffect(() => {
+                sessionStorage.setItem('dlv_cart', JSON.stringify(cart));
+            }, [cart]);
+
+            const updateQuantity = (id, newQuantity) => {
+                const newCart = cart.map(item =>
+                    item.id === id ? { ...item, quantity: Math.max(1, newQuantity) } : item
+                );
+                setCart(newCart);
+            };
+
+            const removeItem = (id) => {
+                showUserModal(
+                    "Are you sure you want to remove this item from your cart?",
+                    'confirm',
+                    () => setCart(cart.filter(item => item.id !== id)),
+                    null,
+                    true
+                );
+            };
+
+            const placeOrder = async () => {
+                logDebug("CartPage: Attempting to place order.");
+                // Ensure ordersDb and userId are available before proceeding
+                if (!ordersDb) {
+                    showUserModal("Orders database connection not established. Please refresh or check console for errors.", "error");
+                    return;
+                }
+                if (!userId) { // userId should be available from AuthContext after auth is complete
+                    showUserModal("User not authenticated. Please try logging in again.", "error");
+                    return;
+                }
+                if (cart.length === 0 && !specialRequest.trim()) {
+                    showUserModal("Your cart is empty and no special request has been entered.", "error");
+                    return;
+                }
+                if (!selectedSite) {
+                    showUserModal("Please select a project site for your order.", "error");
+                    return;
+                }
+
+                // NEW DEBUG LOGS HERE:
+                logDebug(`CartPage: Current userId: ${userId}`);
+                logDebug(`CartPage: ordersDb initialized: ${!!ordersDb}`);
+                logDebug(`CartPage: Attempting to write to collection path: artifacts/${CANVAS_APP_ID}/orders`);
+
+
+                showUserModal(
+                    "Are you sure you want to place this order?",
+                    'confirm',
+                    async () => {
+                        try {
+                            const orderItems = cart.map(item => ({
+                                itemId: item.id,
+                                name: item.name,
+                                quantity: item.quantity,
+                                imageUrl: item.imageUrl || '',
+                                description: item.description || '',
+                                itemStatus: 'Pending', // Initial status for individual items
+                            }));
+
+                            const newOrder = {
+                                userId: userId,
+                                userName: userDisplayName,
+                                items: orderItems,
+                                specialRequest: specialRequest.trim(),
+                                projectSite: selectedSite,
+                                orderStatus: 'Placed', // Initial overall order status
+                                orderDate: new Date().toISOString(),
+                                followUpRequests: [], // Array to store follow-up messages
+                            };
+
+                            await addDoc(collection(ordersDb, `artifacts/${CANVAS_APP_ID}/orders`), newOrder);
+                            sessionStorage.removeItem('dlv_cart'); // Clear cart after successful order
+                            setCart([]);
+                            setSpecialRequest('');
+                            showUserModal("Your order has been placed successfully!", "success");
+                            logDebug("CartPage: Order placed successfully:", newOrder);
+                        } catch (error) {
+                            console.error("CartPage: Error placing order:", error);
+                            showUserModal(`Failed to place order: ${error.message}`, "error");
+                        }
+                    },
+                    null,
+                    true
+                );
+            };
+
+            const totalItemsInCart = cart.reduce((sum, item) => sum + item.quantity, 0);
+
+            return (
+                <div className="p-4">
+                    <h2 className="text-3xl font-bold mb-6 text-gray-800">My Cart</h2>
+
+                    {cart.length === 0 && !specialRequest.trim() ? (
+                        <div className="text-center text-gray-500 text-xl py-10">
+                            Your cart is empty. Add items from the Inventory page or make a special request below.
+                        </div>
+                    ) : (
+                        <div className="space-y-6 mb-8">
+                            {cart.length > 0 && (
+                                <div className="bg-gray-50 p-6 rounded-lg shadow-inner">
+                                    <h3 className="text-2xl font-semibold mb-4 text-gray-800">Cart Items</h3>
+                                    <div className="space-y-4">
+                                        {cart.map(item => (
+                                            <div key={item.id} className="flex items-center bg-white p-4 rounded-md shadow-sm border border-gray-200">
+                                                <img
+                                                    src={item.imageUrl || `https://placehold.co/80x80/e0e0e0/000000?text=No+Image`}
+                                                    alt={item.name}
+                                                    className="w-20 h-20 object-contain rounded-md mr-4"
+                                                    onError={(e) => { e.target.onerror = null; e.target.src = `https://placehold.co/80x80/e0e0e0/000000?text=Image+Error`; }}
+                                                />
+                                                <div className="flex-grow">
+                                                    <p className="text-lg font-medium text-gray-900">{item.name}</p>
+                                                    <p className="text-sm text-gray-600">{item.description}</p>
+                                                </div>
+                                                <div className="flex items-center space-x-2">
+                                                    <button
+                                                        onClick={() => updateQuantity(item.id, item.quantity - 1)}
+                                                        className="px-3 py-1 bg-gray-200 rounded-md hover:bg-gray-300 transition-colors"
+                                                    >
+                                                        -
+                                                    </button>
+                                                    <span className="text-lg font-semibold w-10 text-center">{item.quantity}</span>
+                                                    <button
+                                                        onClick={() => updateQuantity(item.id, item.quantity + 1)}
+                                                        className="px-3 py-1 bg-gray-200 rounded-md hover:bg-gray-300 transition-colors"
+                                                    >
+                                                        +
+                                                    </button>
+                                                    <button
+                                                        onClick={() => removeItem(item.id)}
+                                                        className="ml-4 p-2 text-red-500 hover:text-red-700 transition-colors"
+                                                        title="Remove item"
+                                                    >
+                                                        <i className="fas fa-trash-alt"></i>
+                                                    </button>
+                                                </div>
+                                            </div>
+                                        ))}
+                                    </div>
+                                    <p className="text-right text-xl font-bold mt-4">Total Items: {totalItemsInCart}</p>
+                                </div>
+                            )}
+
+                            <div className="bg-gray-50 p-6 rounded-lg shadow-inner">
+                                <h3 className="text-2xl font-semibold mb-4 text-gray-800">Special Order Request</h3>
+                                <textarea
+                                    className="w-full p-4 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500"
+                                    rows="5"
+                                    placeholder="Request items not found in inventory (e.g., 'Custom length conduit - 100ft', 'Specific brand of relay - model XYZ')"
+                                    value={specialRequest}
+                                    onChange={(e) => setSpecialRequest(e.target.value)}
+                                ></textarea>
+                            </div>
+
+                            <div className="bg-gray-50 p-6 rounded-lg shadow-inner">
+                                <h3 className="text-2xl font-semibold mb-4 text-gray-800">Select Project Site</h3>
+                                {loadingSites ? (
+                                    <p>Loading project sites...</p>
+                                ) : (
+                                    projectSites.length > 0 ? (
+                                        <select
+                                            className="w-full p-3 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500 text-lg"
+                                            value={selectedSite}
+                                            onChange={(e) => setSelectedSite(e.target.value)}
+                                        >
+                                            {projectSites.map((site, index) => (
+                                                <option key={index} value={site}>{site}</option>
+                                            ))}
+                                        </select>
+                                    ) : (
+                                        <p className="text-gray-600">No project sites available. Please contact admin.</p>
+                                    )
+                                )}
+                            </div>
+                        </div>
+                    )}
+
+                    <button
+                        onClick={placeOrder}
+                        className="w-full py-4 bg-green-600 text-white text-xl font-bold rounded-md hover:bg-green-700 transition-colors duration-200 shadow-lg transform hover:-translate-y-1"
+                    >
+                        Place Order
+                    </button>
+                </div>
+            );
+        };
+
+        {/* Order History Page Component */}
+        const OrderHistoryPage = ({ ordersDb, showUserModal, userId }) => {
+            const [orders, setOrders] = useState([]);
+            const [loading, setLoading] = useState(true);
+            const [searchTerm, setSearchTerm] = useState('');
+            const [selectedOrder, setSelectedOrder] = useState(null); // For detailed view modal
+            const [followUpMessage, setFollowUpMessage] = useState('');
+
+            useEffect(() => {
+                logDebug("OrderHistoryPage: Fetching order history for userId:", userId);
+                if (!ordersDb || !userId) {
+                    setLoading(false);
+                    return;
+                }
+
+                // Query orders for the current user ID
+                const ordersColRef = collection(ordersDb, `artifacts/${CANVAS_APP_ID}/orders`);
+                // Note: Firestore does not support `orderBy` on multiple fields without an index,
+                // and for list operations in rules, it is simpler to fetch and sort client-side.
+                const q = query(ordersColRef, where("userId", "==", userId));
+
+                const unsubscribe = onSnapshot(q, (snapshot) => {
+                    logDebug("OrderHistoryPage: Order history snapshot received for user:", userId);
+                    const userOrders = snapshot.docs.map(doc => ({
+                        id: doc.id,
+                        ...doc.data(),
+                        orderDate: doc.data().orderDate ? new Date(doc.data().orderDate) : null // Convert to Date object
+                    })).sort((a, b) => b.orderDate - a.orderDate); // Sort by date descending
+                    setOrders(userOrders);
+                    setLoading(false);
+                    logDebug("OrderHistoryPage: Order history loaded, loading set to false.");
+                }, (err) => {
+                    console.error("OrderHistoryPage: Error fetching order history:", err);
+                    showUserModal(`Failed to load order history: ${err.message}`, "error");
+                    setLoading(false);
+                });
+
+                return () => unsubscribe();
+            }, [ordersDb, userId]);
+
+            const filteredOrders = orders.filter(order =>
+                order.id.toLowerCase().includes(searchTerm.toLowerCase()) ||
+                order.orderStatus.toLowerCase().includes(searchTerm.toLowerCase()) ||
+                (order.projectSite && order.projectSite.toLowerCase().includes(searchTerm.toLowerCase())) ||
+                order.items.some(item =>
+                    item.name.toLowerCase().includes(searchTerm.toLowerCase())
+                ) ||
+                (order.specialRequest && order.specialRequest.toLowerCase().includes(searchTerm.toLowerCase()))
+            );
+
+            const handleFollowUp = async (orderId) => {
+                logDebug("OrderHistoryPage: Attempting to send follow-up for order:", orderId);
+                if (!followUpMessage.trim()) {
+                    showUserModal("Please enter a message for your follow-up request.", "error");
+                    return;
+                }
+                if (!ordersDb) return;
+
+                showUserModal(
+                    "Send this follow-up message?",
+                    'confirm',
+                    async () => {
+                        try {
+                            const orderDocRef = doc(ordersDb, `artifacts/${CANVAS_APP_ID}/orders`, orderId);
+                            await updateDoc(docRef, {
+                                followUpRequests: [...(selectedOrder.followUpRequests || []), {
+                                    message: followUpMessage.trim(),
+                                    timestamp: new Date().toISOString(),
+                                    from: userId // Indicate who sent the message
+                                }]
+                            });
+                            showUserModal("Follow-up request sent!", "success");
+                            setFollowUpMessage(''); // Clear input
+                            setSelectedOrder(prev => ({ // Update the selected order in state
+                                ...prev,
+                                followUpRequests: [...(prev.followUpRequests || []), {
+                                    message: followUpMessage.trim(),
+                                    timestamp: new Date().toISOString(),
+                                    from: userId
+                                }]
+                            }));
+                            logDebug("OrderHistoryPage: Follow-up sent successfully.");
+                        } catch (error) {
+                            console.error("OrderHistoryPage: Error sending follow-up:", error);
+                            showUserModal(`Failed to send follow-up: ${error.message}`, "error");
+                        }
+                    },
+                    null,
+                    true
+                );
+            };
+
+
+            if (loading) {
+                return <div className="text-center py-8">Loading order history...</div>;
+            }
+
+            if (orders.length === 0) {
+                return <div className="text-center text-gray-500 text-xl py-10">No orders placed yet.</div>;
+            }
+
+            return (
+                <div className="p-4">
+                    <h2 className="text-3xl font-bold mb-6 text-gray-800">My Orders</h2>
+
+                    <div className="mb-6">
+                        <input
+                            type="text"
+                            placeholder="Search orders by ID, status, item name, or request..."
+                            value={searchTerm}
+                            onChange={(e) => setSearchTerm(e.target.value)}
+                            className="w-full p-3 border border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500"
+                        />
+                    </div>
+
+                    <div className="space-y-4">
+                        {filteredOrders.map(order => (
+                            <div key={order.id} className="bg-white border border-gray-200 rounded-lg shadow-md p-4">
+                                <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-3">
+                                    <div className="mb-2 sm:mb-0">
+                                        <p className="text-gray-700 text-sm">Order ID: <span className="font-mono text-gray-900">{order.id}</span></p>
+                                        <p className="text-gray-700 text-sm">Date: {order.orderDate ? order.orderDate.toLocaleDateString() : 'N/A'}</p>
+                                        <p className="text-gray-700 text-sm">Site: <span className="font-medium">{order.projectSite || 'N/A'}</span></p>
+                                    </div>
+                                    <span className={`px-3 py-1 rounded-full text-sm font-semibold
+                                        ${order.orderStatus === 'Placed' ? 'bg-blue-100 text-blue-800' :
+                                          order.orderStatus === 'Processing' ? 'bg-yellow-100 text-yellow-800' :
+                                          order.orderStatus === 'Completed' ? 'bg-green-100 text-green-800' :
+                                          order.orderStatus === 'Cancelled' ? 'bg-red-100 text-red-800' :
+                                          'bg-gray-100 text-gray-800'
+                                        }`}
+                                    >
+                                        Status: {order.orderStatus || 'Unknown'}
+                                    </span>
+                                </div>
+                                <div className="border-t border-gray-100 pt-3">
+                                    <p className="font-semibold text-gray-800 mb-2">Items:</p>
+                                    {/* Refactored conditional list rendering */}
+                                    {order.items.length > 0 ? (
+                                        <ul className="list-disc list-inside text-gray-600">
+                                            {order.items.map((item, idx) => (
+                                                <li key={idx}>
+                                                    {item.name} (x{item.quantity}) - <span className="font-medium">{item.itemStatus || 'Pending'}</span>
+                                                </li>
+                                            ))}
+                                        </ul>
+                                    ) : (
+                                        <p className="text-gray-600 italic">No standard items found for this order.</p>
+                                    )}
+                                    {order.specialRequest && (
+                                        <p className="mt-2 text-gray-700">
+                                            <span className="font-semibold">Special Request:</span> {order.specialRequest}
+                                        </p>
+                                    )}
+                                </div>
+                                <div className="mt-4 text-right">
+                                    <button
+                                        onClick={() => setSelectedOrder(order)}
+                                        className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors duration-200 text-sm font-medium"
+                                    >
+                                        View Details / Follow-up
+                                    </button>
+                                </div>
+                            </div>
+                        ))}
+                    </div>
+
+                    {/* Order Detail Modal */}
+                    {selectedOrder && (
+                        <div className="fixed inset-0 bg-gray-600 bg-opacity-75 flex items-center justify-center p-4 z-50">
+                            <div className="bg-white p-8 rounded-lg shadow-xl w-full max-w-2xl overflow-y-auto max-h-[90vh]">
+                                <h3 className="text-2xl font-bold mb-4 text-gray-900">Order Details: <span className="font-mono text-lg">{selectedOrder.id}</span></h3>
+                                <div className="mb-4">
+                                    <p><strong>Orderer:</strong> {selectedOrder.userName}</p>
+                                    <p><strong>Site:</strong> {selectedOrder.projectSite || 'N/A'}</p>
+                                    <p><strong>Date:</strong> {selectedOrder.orderDate ? selectedOrder.orderDate.toLocaleString() : 'N/A'}</p>
+                                    <p><strong>Overall Status:</strong> {selectedOrder.orderStatus}</p>
+                                </div>
+                                <div className="mb-6">
+                                    <h4 className="font-semibold text-lg mb-2">Requested Items:</h4>
+                                    {selectedOrder.items.length > 0 ? (
+                                        <ul className="space-y-2">
+                                            {selectedOrder.items.map((item, idx) => (
+                                                <li key={idx} className="flex items-center p-2 bg-gray-50 rounded-md">
+                                                    <img
+                                                        src={item.imageUrl || `https://placehold.co/50x50/e0e0e0/000000?text=No+Img`}
+                                                        alt={item.name}
+                                                        className="w-12 h-12 object-contain rounded-sm mr-3"
+                                                    />
+                                                    <div className="flex-grow">
+                                                        <p className="font-medium text-gray-800">{item.name} (x{item.quantity})</p>
+                                                        <p className="text-sm text-gray-600">Status: <span className="font-semibold">{item.itemStatus || 'Pending'}</span></p>
+                                                    </div>
+                                                </li>
+                                            ))}
+                                        </ul>
+                                    ) : (
+                                        <p className="text-gray-600 italic">No standard items requested.</p>
+                                    )}
+                                    {selectedOrder.specialRequest && (
+                                        <p className="mt-4 p-3 bg-blue-50 rounded-md text-blue-800 border border-blue-200">
+                                            <span className="font-semibold">Special Request:</span> {selectedOrder.specialRequest}
+                                        </p>
+                                    )}
+                                </div>
+
+                                <div className="mb-6">
+                                    <h4 className="font-semibold text-lg mb-2">Follow-up Communication:</h4>
+                                    <div className="max-h-40 overflow-y-auto border border-gray-200 rounded-md p-3 bg-gray-50 space-y-2 mb-3">
+                                        {selectedOrder.followUpRequests && selectedOrder.followUpRequests.length > 0 ? (
+                                            selectedOrder.followUpRequests.map((req, idx) => (
+                                                <div key={idx} className={`text-sm bg-white p-2 rounded-md shadow-sm ${req.from === selectedOrder.userId ? 'text-blue-800' : 'text-green-800'}`}>
+                                                    <p className="font-medium">
+                                                        {new Date(req.timestamp).toLocaleString()} - From {req.from === userId ? 'You' : 'Warehouse/Admin'}:
+                                                    </p>
+                                                    <p className="pl-4">{req.message}</p>
+                                                </div>
+                                            ))
+                                        ) : (
+                                            <p className="text-gray-600 italic">No communication yet.</p>
+                                        )}
+                                    </div>
+                                    <textarea
+                                        className="w-full p-2 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500"
+                                        rows="3"
+                                        placeholder="Type your follow-up message here..."
+                                        value={followUpMessage}
+                                        onChange={(e) => setFollowUpMessage(e.target.value)}
+                                    ></textarea>
+                                    <button
+                                        onClick={() => handleFollowUp(selectedOrder.id)}
+                                        className="mt-2 px-4 py-2 bg-purple-600 text-white rounded-md hover:bg-purple-700 transition-colors duration-200 text-sm font-medium"
+                                    >
+                                        Send Follow-up
+                                    </button>
+                                </div>
+
+                                <div className="flex justify-end">
+                                    <button
+                                        onClick={() => setSelectedOrder(null)}
+                                        className="px-6 py-2 bg-gray-300 text-gray-800 rounded-md hover:bg-gray-400 transition-colors duration-200 font-semibold"
+                                    >
+                                        Close
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+                </div>
+            );
+        };
+
+        {/* Order Management Page Component (Warehouse/Admin) */}
+        const OrderManagementPage = ({ ordersDb, showUserModal, userId }) => {
+            const [allOrders, setAllOrders] = useState([]);
+            const [loading, setLoading] = useState(true);
+            const [searchTerm, setSearchTerm] = useState('');
+            const [selectedOrder, setSelectedOrder] = useState(null); // For detail/edit modal
+            const [orderStatusOptions] = useState(['Placed', 'Processing', 'Ready for Pickup', 'Completed', 'Cancelled']);
+            const [itemStatusOptions] = useState(['Pending', 'In Stock', 'Ordered', 'Ready for Pickup', 'Completed', 'Cancelled']);
+
+            useEffect(() => {
+                logDebug("OrderManagementPage: Fetching all orders...");
+                if (!ordersDb) {
+                    setLoading(false);
+                    return;
+                }
+
+                // Fetch all orders
+                const ordersColRef = collection(ordersDb, `artifacts/${CANVAS_APP_ID}/orders`);
+                const q = query(ordersColRef);
+
+                const unsubscribe = onSnapshot(q, (snapshot) => {
+                    logDebug("OrderManagementPage: All orders snapshot received.");
+                    const ordersData = snapshot.docs.map(doc => ({
+                        id: doc.id,
+                        ...doc.data(),
+                        orderDate: doc.data().orderDate ? new Date(doc.data().orderDate) : null // Convert to Date object
+                    })).sort((a, b) => b.orderDate - a.orderDate); // Sort by date descending
+                    setAllOrders(ordersData);
+                    setLoading(false);
+                    logDebug("OrderManagementPage: All orders loaded, loading set to false.");
+                }, (err) => {
+                    console.error("OrderManagementPage: Error fetching all orders:", err);
+                    showUserModal(`Failed to load all orders: ${err.message}`, "error");
+                    setLoading(false);
+                });
+
+                return () => unsubscribe();
+            }, [ordersDb]);
+
+            const filteredOrders = allOrders.filter(order =>
+                order.id.toLowerCase().includes(searchTerm.toLowerCase()) ||
+                order.userName.toLowerCase().includes(searchTerm.toLowerCase()) ||
+                order.orderStatus.toLowerCase().includes(searchTerm.toLowerCase()) ||
+                (order.projectSite && order.projectSite.toLowerCase().includes(searchTerm.toLowerCase())) ||
+                order.items.some(item =>
+                    item.name.toLowerCase().includes(searchTerm.toLowerCase())
+                ) ||
+                (order.specialRequest && order.specialRequest.toLowerCase().includes(searchTerm.toLowerCase()))
+            );
+
+            const handleUpdateOrderStatus = async (orderId, newStatus) => {
+                logDebug("OrderManagementPage: Attempting to update overall order status for order:", orderId, newStatus);
+                if (!ordersDb) return;
+                showUserModal(
+                    `Change overall status of order ${orderId} to "${newStatus}"?`,
+                    'confirm',
+                    async () => {
+                        try {
+                            const docRef = doc(ordersDb, `artifacts/${CANVAS_APP_ID}/orders`, orderId);
+                            await updateDoc(docRef, { orderStatus: newStatus });
+                            showUserModal("Order status updated!", "success");
+                            // Update selected order in state if it's currently open
+                            if (selectedOrder && selectedOrder.id === orderId) {
+                                setSelectedOrder(prev => ({ ...prev, orderStatus: newStatus }));
+                            }
+                            logDebug("OrderManagementPage: Overall order status updated successfully.");
+                        } catch (error) {
+                            console.error("OrderManagementPage: Error updating order status:", error);
+                            showUserModal(`Failed to update order status: ${error.message}`, "error");
+                        }
+                    },
+                    null,
+                    true
+                );
+            };
+
+            const handleUpdateItemStatus = async (orderId, itemIndex, newItemStatus) => {
+                logDebug("OrderManagementPage: Attempting to update item status for order:", orderId, "item index:", itemIndex, "new status:", newItemStatus);
+                if (!ordersDb) return;
+
+                const orderToUpdate = allOrders.find(order => order.id === orderId);
+                if (!orderToUpdate) return;
+
+                const updatedItems = [...orderToUpdate.items];
+                updatedItems[itemIndex].itemStatus = newItemStatus;
+
+                showUserModal(
+                    `Change status of "${updatedItems[itemIndex].name}" to "${newItemStatus}"?`,
+                    'confirm',
+                    async () => {
+                        try {
+                            const docRef = doc(ordersDb, `artifacts/${CANVAS_APP_ID}/orders`, orderId);
+                            await updateDoc(docRef, { items: updatedItems });
+                            showUserModal("Item status updated!", "success");
+                            // Update selected order in state if it's currently open
+                            if (selectedOrder && selectedOrder.id === orderId) {
+                                setSelectedOrder(prev => ({ ...prev, items: updatedItems }));
+                            }
+                            logDebug("OrderManagementPage: Item status updated successfully.");
+                        } catch (error) {
+                            console.error("OrderManagementPage: Error updating item status:", error);
+                            showUserModal(`Failed to update item status: ${err.message}`, "error");
+                        }
+                    },
+                    null,
+                    true
+                );
+            };
+
+            const handleReplyToFollowUp = async (orderId, message) => {
+                logDebug("OrderManagementPage: Attempting to send reply for order:", orderId, "message:", message);
+                if (!ordersDb || !message.trim()) return;
+
+                showUserModal(
+                    "Send this reply to the customer?",
+                    'confirm',
+                    async () => {
+                        try {
+                            const orderDocRef = doc(ordersDb, `artifacts/${CANVAS_APP_ID}/orders`, orderId);
+                            await updateDoc(docRef, {
+                                followUpRequests: [...(selectedOrder.followUpRequests || []), {
+                                    message: message.trim(),
+                                    timestamp: new Date().toISOString(),
+                                    from: userId // Indicate who sent the message (Warehouse/Admin UID)
+                                }]
+                            });
+                            showUserModal("Reply sent!", "success");
+                            // Update the selected order in state to reflect the new message immediately
+                            setSelectedOrder(prev => ({
+                                ...prev,
+                                followUpRequests: [...(prev.followUpRequests || []), {
+                                    message: message.trim(),
+                                    timestamp: new Date().toISOString(),
+                                    from: userId
+                                }]
+                            }));
+                            logDebug("OrderManagementPage: Reply sent successfully.");
+                        } catch (error) {
+                            console.error("OrderManagementPage: Error sending reply:", error);
+                            showUserModal(`Failed to send reply: ${error.message}`, "error");
+                        }
+                    },
+                    null,
+                    true
+                );
+            };
+
+
+            if (loading) {
+                return <div className="text-center py-8">Loading all orders...</div>;
+            }
+
+            if (allOrders.length === 0) {
+                return <div className="text-center text-gray-500 text-xl py-10">No orders have been placed yet.</div>;
+            }
+
+            return (
+                <div className="p-4">
+                    <h2 className="text-3xl font-bold mb-6 text-gray-800">Order Management</h2>
+
+                    <div className="mb-6">
+                        <input
+                            type="text"
+                            placeholder="Search orders by ID, user, status, item name, or request..."
+                            value={searchTerm}
+                            onChange={(e) => setSearchTerm(e.target.value)}
+                            className="w-full p-3 border border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500"
+                        />
+                    </div>
+
+                    <div className="space-y-4">
+                        {filteredOrders.map(order => (
+                            <div key={order.id} className="bg-white border border-gray-200 rounded-lg shadow-md p-4">
+                                <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-3">
+                                    <div className="mb-2 sm:mb-0">
+                                        <p className="text-gray-700 text-sm">Order ID: <span className="font-mono text-gray-900">{order.id}</span></p>
+                                        <p className="text-gray-700 text-sm">Orderer: <span className="font-medium">{order.userName || 'N/A'}</span></p>
+                                        <p className="text-gray-700 text-sm">Date: {order.orderDate ? order.orderDate.toLocaleDateString() : 'N/A'}</p>
+                                        <p className="text-gray-700 text-sm">Site: <span className="font-medium">{order.projectSite || 'N/A'}</span></p>
+                                    </div>
+                                    <span className={`px-3 py-1 rounded-full text-sm font-semibold
+                                        ${order.orderStatus === 'Placed' ? 'bg-blue-100 text-blue-800' :
+                                          order.orderStatus === 'Processing' ? 'bg-yellow-100 text-yellow-800' :
+                                          order.orderStatus === 'Completed' ? 'bg-green-100 text-green-800' :
+                                          order.orderStatus === 'Cancelled' ? 'bg-red-100 text-red-800' :
+                                          'bg-gray-100 text-gray-800'
+                                        }`}
+                                    >
+                                        Status: {order.orderStatus || 'Unknown'}
+                                    </span>
+                                </div>
+                                <div className="border-t border-gray-100 pt-3">
+                                    <p className="font-semibold text-gray-800 mb-2">Items:</p>
+                                    {/* Refactored conditional list rendering */}
+                                    {order.items.length > 0 ? (
+                                        <ul className="list-disc list-inside text-gray-600">
+                                            {order.items.map((item, idx) => (
+                                                <li key={idx}>
+                                                    {item.name} (x{item.quantity}) - <span className="font-medium">{item.itemStatus || 'Pending'}</span>
+                                                </li>
+                                            ))}
+                                        </ul>
+                                    ) : (
+                                        <p className="text-gray-600 italic">No standard items found for this order.</p>
+                                    )}
+                                    {order.specialRequest && (
+                                        <p className="mt-2 text-gray-700">
+                                            <span className="font-semibold">Special Request:</span> {order.specialRequest}
+                                        </p>
+                                    )}
+                                </div>
+                                <div className="mt-4 text-right">
+                                    <button
+                                        onClick={() => setSelectedOrder(order)}
+                                        className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors duration-200 text-sm font-medium"
+                                    >
+                                        Manage Order
+                                    </button>
+                                </div>
+                            </div>
+                        ))}
+                    </div>
+
+                    {/* Order Management Detail Modal */}
+                    {selectedOrder && (
+                        <div className="fixed inset-0 bg-gray-600 bg-opacity-75 flex items-center justify-center p-4 z-50">
+                            <div className="bg-white p-8 rounded-lg shadow-xl w-full max-w-3xl overflow-y-auto max-h-[90vh]">
+                                <h3 className="text-2xl font-bold mb-4 text-gray-900">Manage Order: <span className="font-mono text-lg">{selectedOrder.id}</span></h3>
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
+                                    <div>
+                                        <p><strong>Orderer:</strong> {selectedOrder.userName}</p>
+                                        <p><strong>Site:</strong> {selectedOrder.projectSite || 'N/A'}</p>
+                                        <p><strong>Date:</strong> {selectedOrder.orderDate ? selectedOrder.orderDate.toLocaleString() : 'N/A'}</p>
+                                        <div className="mt-2">
+                                            <label htmlFor="overallStatus" className="block text-gray-700 font-medium mb-1">Overall Status:</label>
+                                            <select
+                                                id="overallStatus"
+                                                value={selectedOrder.orderStatus}
+                                                onChange={(e) => handleUpdateOrderStatus(selectedOrder.id, e.target.value)}
+                                                className="w-full p-2 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500"
+                                            >
+                                                {orderStatusOptions.map(status => (
+                                                    <option key={status} value={status}>{status}</option>
+                                                ))}
+                                            </select>
+                                        </div>
+                                    </div>
+                                    <div>
+                                        <h4 className="font-semibold text-lg mb-2">Requested Items:</h4>
+                                        {selectedOrder.items.length > 0 ? (
+                                            <ul className="space-y-2">
+                                                {selectedOrder.items.map((item, idx) => (
+                                                    <li key={idx} className="flex items-center p-2 bg-gray-50 rounded-md">
+                                                        <img
+                                                            src={item.imageUrl || `https://placehold.co/50x50/e0e0e0/000000?text=No+Img`}
+                                                            alt={item.name}
+                                                            className="w-12 h-12 object-contain rounded-sm mr-3"
+                                                        />
+                                                        <div className="flex-grow">
+                                                            <p className="font-medium text-gray-800">{item.name} (x{item.quantity})</p>
+                                                            <label htmlFor={`itemStatus-${idx}`} className="sr-only">Status for {item.name}</label>
+                                                            <select
+                                                                id={`itemStatus-${idx}`}
+                                                                value={item.itemStatus || 'Pending'}
+                                                                onChange={(e) => handleUpdateItemStatus(selectedOrder.id, idx, e.target.value)}
+                                                                className="mt-1 w-full p-1 border border-gray-300 rounded-md text-sm focus:ring-blue-500 focus:border-blue-500"
+                                                            >
+                                                                {itemStatusOptions.map(status => (
+                                                                    <option key={status} value={status}>{status}</option>
+                                                                ))}
+                                                            </select>
+                                                        </div>
+                                                    </li>
+                                                ))}
+                                            </ul>
+                                        ) : (
+                                            <p className="text-gray-600 italic">No standard items requested.</p>
+                                        )}
+                                        {selectedOrder.specialRequest && (
+                                            <p className="mt-4 p-3 bg-blue-50 rounded-md text-blue-800 border border-blue-200">
+                                                <span className="font-semibold">Special Request:</span> {selectedOrder.specialRequest}
+                                            </p>
+                                        )}
+                                    </div>
+                                </div>
+
+                                <div className="mb-6">
+                                    <h4 className="font-semibold text-lg mb-2">Communication Log:</h4>
+                                    <div className="max-h-40 overflow-y-auto border border-gray-200 rounded-md p-3 bg-gray-50 space-y-2 mb-3">
+                                        {selectedOrder.followUpRequests && selectedOrder.followUpRequests.length > 0 ? (
+                                            selectedOrder.followUpRequests.map((req, idx) => (
+                                                <div key={idx} className={`text-sm bg-white p-2 rounded-md shadow-sm ${req.from === selectedOrder.userId ? 'text-blue-800' : 'text-green-800'}`}>
+                                                    <p className="font-medium">
+                                                        {new Date(req.timestamp).toLocaleString()} - From {req.from === selectedOrder.userId ? selectedOrder.userName : 'You (Admin/Warehouse)'}:
+                                                    </p>
+                                                    <p className="pl-4">{req.message}</p>
+                                                </div>
+                                            ))
+                                        ) : (
+                                            <p className="text-gray-600 italic">No communication yet.</p>
+                                        )}
+                                    </div>
+                                    <textarea
+                                        className="w-full p-2 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500"
+                                        rows="3"
+                                        placeholder="Reply to customer or add an internal note..."
+                                        onKeyPress={(e) => {
+                                            if (e.key === 'Enter' && !e.shiftKey) { // Send on Enter, allow Shift+Enter for newline
+                                                e.preventDefault();
+                                                handleReplyToFollowUp(selectedOrder.id, e.target.value);
+                                                e.target.value = ''; // Clear after sending
+                                            }
+                                        }}
+                                    ></textarea>
+                                    <button
+                                        onClick={(e) => {
+                                            const textarea = e.target.previousElementSibling;
+                                            handleReplyToFollowUp(selectedOrder.id, textarea.value);
+                                            textarea.value = ''; // Clear after sending
+                                        }}
+                                        className="mt-2 px-4 py-2 bg-purple-600 text-white rounded-md hover:bg-purple-700 transition-colors duration-200 text-sm font-medium"
+                                    >
+                                        Send Reply
+                                    </button>
+                                </div>
+
+                                <div className="flex justify-end">
+                                    <button
+                                        onClick={() => setSelectedOrder(null)}
+                                        className="px-6 py-2 bg-gray-300 text-gray-800 rounded-md hover:bg-gray-400 transition-colors duration-200 font-semibold"
+                                    >
+                                        Close
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+                </div>
+            );
+        };
+
+
+        {/* Render the App */}
+        ReactDOM.render(
+            <React.StrictMode>
+                <ErrorBoundary>
+                    <AuthProvider>
+                        <App />
+                    </AuthProvider>
+                </ErrorBoundary>
+            </React.StrictMode>,
+            document.getElementById('root')
+        );
+    </script>
+</body>
+</html>

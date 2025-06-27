@@ -191,6 +191,18 @@
                 };
 
                 initializeAndAuth();
+
+                // Load user and role from localStorage on initial render
+                const savedDisplayName = localStorage.getItem('dlv_user_displayName');
+                const savedRole = localStorage.getItem('dlv_user_role');
+                if (savedDisplayName && savedRole) {
+                    // Temporarily set user and role from localStorage for faster UI display
+                    // The onAuthStateChanged listener will eventually set the true Firebase UID
+                    setUser({ displayName: savedDisplayName, uid: userId || 'temp-id' }); // Use existing userId or temp
+                    setRole(savedRole);
+                    logDebug("AuthProvider: Loaded user and role from localStorage:", savedDisplayName, savedRole);
+                }
+
             }, []); // Empty dependency array means this runs once on mount
 
             const login = (name) => {
@@ -206,6 +218,10 @@
                     newRole = 'admin';
                 }
 
+                // Persist display name and role to localStorage
+                localStorage.setItem('dlv_user_displayName', name);
+                localStorage.setItem('dlv_user_role', newRole);
+
                 setRole(newRole);
                 setUser({ displayName: name, uid: newUid });
                 setUserId(newUid);
@@ -215,6 +231,10 @@
             const logout = () => {
                 logDebug("AuthContext.logout: Attempting logout.");
                 ordersAuthRef.current.signOut().then(() => {
+                    // Clear persisted state from localStorage
+                    localStorage.removeItem('dlv_user_displayName');
+                    localStorage.removeItem('dlv_user_role');
+
                     setUser(null);
                     setRole('orderer');
                     setUserId(null); // Clear userId after logout
@@ -1148,10 +1168,11 @@
                 showUserModal(
                     "Send this follow-up message?",
                     'confirm',
-                    async () => {
+                    async () => { // Changed to async function here
                         try {
+                            // Ensure docRef is defined within the async function scope
                             const orderDocRef = doc(ordersDb, `artifacts/${CANVAS_APP_ID}/orders`, orderId);
-                            await updateDoc(docRef, {
+                            await updateDoc(orderDocRef, {
                                 followUpRequests: [...(selectedOrder.followUpRequests || []), {
                                     message: followUpMessage.trim(),
                                     timestamp: new Date().toISOString(),
@@ -1299,14 +1320,14 @@
                                         {selectedOrder.followUpRequests && selectedOrder.followUpRequests.length > 0 ? (
                                             selectedOrder.followUpRequests.map((req, idx) => (
                                                 <div key={idx} className={`text-sm bg-white p-2 rounded-md shadow-sm ${req.from === selectedOrder.userId ? 'text-blue-800' : 'text-green-800'}`}>
-                                                    <p className="font-medium">
+                                                    <p className="font-medium text-gray-700">
                                                         {new Date(req.timestamp).toLocaleString()} - From {req.from === userId ? 'You' : 'Warehouse/Admin'}:
                                                     </p>
                                                     <p className="pl-4">{req.message}</p>
                                                 </div>
                                             ))
                                         ) : (
-                                            <p className="text-gray-600 italic">No communication yet.</p>
+                                            <p className="text-gray-600 italic">No follow-up messages yet.</p>
                                         )}
                                     </div>
                                     <textarea
@@ -1455,10 +1476,11 @@
                 showUserModal(
                     "Send this reply to the customer?",
                     'confirm',
-                    async () => {
+                    async () => { // Changed to async function here
                         try {
+                            // Ensure orderDocRef is defined within the async function scope
                             const orderDocRef = doc(ordersDb, `artifacts/${CANVAS_APP_ID}/orders`, orderId);
-                            await updateDoc(docRef, {
+                            await updateDoc(orderDocRef, {
                                 followUpRequests: [...(selectedOrder.followUpRequests || []), {
                                     message: message.trim(),
                                     timestamp: new Date().toISOString(),

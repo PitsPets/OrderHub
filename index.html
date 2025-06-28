@@ -29,6 +29,7 @@
         }
         ::-webkit-scrollbar-thumb:hover {
             background: #555;
+            border-radius: 10px;
         }
     </style>
 </head>
@@ -109,6 +110,42 @@
             }
         };
 
+        // --- Utility functions for local storage persistence (Base64 for basic obfuscation) ---
+        const LOCAL_STORAGE_KEY_USERNAME = 'dlv_username';
+        const LOCAL_STORAGE_KEY_PASSWORD = 'dlv_password'; // Storing password directly is not recommended for high security apps
+        const LOCAL_STORAGE_KEY_REMEMBER_ME = 'dlv_remember_me';
+
+        const saveCredentials = (username, password, rememberMe) => {
+            if (rememberMe) {
+                localStorage.setItem(LOCAL_STORAGE_KEY_USERNAME, btoa(username)); // Base64 encode
+                localStorage.setItem(LOCAL_STORAGE_KEY_PASSWORD, btoa(password)); // Base64 encode
+                localStorage.setItem(LOCAL_STORAGE_KEY_REMEMBER_ME, 'true');
+            } else {
+                clearSavedCredentials();
+            }
+        };
+
+        const getSavedCredentials = () => {
+            const rememberMe = localStorage.getItem(LOCAL_STORAGE_KEY_REMEMBER_ME) === 'true';
+            if (rememberMe) {
+                const username = localStorage.getItem(LOCAL_STORAGE_KEY_USERNAME);
+                const password = localStorage.getItem(LOCAL_STORAGE_KEY_PASSWORD);
+                return username && password ? {
+                    username: atob(username), // Base64 decode
+                    password: atob(password), // Base64 decode
+                    rememberMe: true
+                } : null;
+            }
+            return null;
+        };
+
+        const clearSavedCredentials = () => {
+            localStorage.removeItem(LOCAL_STORAGE_KEY_USERNAME);
+            localStorage.removeItem(LOCAL_STORAGE_KEY_PASSWORD);
+            localStorage.removeItem(LOCAL_STORAGE_KEY_REMEMBER_ME);
+        };
+
+
         // --- Context for Authentication ---
         const AuthContext = createContext(null);
 
@@ -117,12 +154,95 @@
             const [role, setRole] = useState('orderer'); // 'orderer', 'warehouse', 'admin'
             const [userId, setUserId] = useState(null);
             const [loading, setLoading] = useState(true);
-            const [authError, setAuthError] = useState(null);
+            const [authError, setAuthError] = useState(null); // Exposed to children for specific error display
 
             // Firebase instances for the 'dlvorders' project
             const ordersAppRef = useRef(null);
             const ordersDbRef = useRef(null);
             const ordersAuthRef = useRef(null);
+
+            // Function to attempt login, now handling persistence
+            const attemptLogin = async (username, password) => {
+                logDebug("AuthContext.attemptLogin: Attempting login with username:", username);
+                setAuthError(null); // Clear previous errors at the start of a new attempt
+
+                if (!ordersAuthRef.current) {
+                    setAuthError("Firebase Auth not initialized. Please refresh the page.");
+                    return false;
+                }
+                if (!ordersDbRef.current) {
+                    setAuthError("Firebase Firestore not initialized. Please refresh the page.");
+                    return false;
+                }
+
+                // Construct a dummy email for Firebase authentication
+                const firebaseEmail = `${username}@dlv-hub-temp.com`;
+
+                try {
+                    let credential;
+                    try {
+                        logDebug("AuthContext.attemptLogin: Attempting signInWithEmailAndPassword using dummy email:", firebaseEmail);
+                        credential = await signInWithEmailAndPassword(ordersAuthRef.current, firebaseEmail, password);
+                        logDebug("AuthContext.attemptLogin: Signed in with username/password.");
+                    } catch (signInError) {
+                        if (signInError.code === 'auth/user-not-found' || signInError.code === 'auth/wrong-password') {
+                            // If user not found or wrong password, attempt to create account
+                            logDebug("AuthContext.attemptLogin: User not found or wrong password, attempting to create new account with username:", username);
+                            credential = await createUserWithEmailAndPassword(ordersAuthRef.current, firebaseEmail, password);
+                            logDebug("AuthContext.attemptLogin: Account created with username/password.");
+                        } else {
+                            // Catch any other Firebase auth errors here and set the message
+                            console.error("AuthContext.attemptLogin: Firebase error:", signInError);
+                            setAuthError(`Login/Registration failed: ${signInError.message}`);
+                            return false;
+                        }
+                    }
+
+                    const currentUser = credential.user;
+                    let newRole = 'orderer';
+                    let finalDisplayName = username; // Use username as display name
+
+                    // Check if user profile already exists in Firestore
+                    const userProfileRef = doc(ordersDbRef.current, `artifacts/${CANVAS_APP_ID}/users`, currentUser.uid);
+                    const userProfileSnap = await getDoc(userProfileRef);
+
+                    if (!userProfileSnap.exists()) {
+                        // If profile doesn't exist, create it with the selected name and role
+                        // Determine role based on typed username (for first login/registration)
+                        if (username.toLowerCase() === 'warehouse') {
+                            newRole = 'warehouse';
+                        } else if (username.toLowerCase() === 'admin') {
+                            newRole = 'admin';
+                        }
+
+                        await setDoc(userProfileRef, {
+                            displayName: finalDisplayName,
+                            email: currentUser.email || firebaseEmail, // Store Firebase's email or dummy email
+                            role: newRole,
+                            createdAt: new Date().toISOString()
+                        });
+                        logDebug("AuthContext.attemptLogin: Created new user profile in Firestore.");
+                    } else {
+                        // If profile exists, update local state with profile data (in case role was changed by admin)
+                        const profileData = userProfileSnap.data();
+                        newRole = profileData.role || 'orderer'; // Use role from Firestore
+                        finalDisplayName = profileData.displayName || finalDisplayName;
+                        logDebug("AuthContext.attemptLogin: Loaded existing user profile from Firestore.");
+                    }
+
+                    setUser({ displayName: finalDisplayName, uid: currentUser.uid });
+                    setRole(newRole);
+                    setUserId(currentUser.uid); // Ensure userId is the Firebase UID
+                    setAuthError(null); // Clear any errors on successful login
+                    logDebug(`AuthContext.attemptLogin: Final logged in as ${finalDisplayName} (${newRole}) with UID: ${currentUser.uid}`);
+                    return true; // Indicate success
+                } catch (error) {
+                    // Catch any non-Firebase or unexpected errors during profile loading/saving
+                    console.error("AuthContext.attemptLogin: General login/profile error:", error);
+                    setAuthError(`An unexpected error occurred: ${error.message}`);
+                    return false; // Indicate failure
+                }
+            };
 
             useEffect(() => {
                 const initializeAndAuth = async () => {
@@ -131,6 +251,9 @@
 
                     try {
                         const appConfig = CANVAS_FIREBASE_CONFIG || ordersFirebaseConfig;
+                        // Log the Firebase config being used for the orders project
+                        logDebug("AuthProvider: Orders Firebase Config being used:", appConfig);
+                        
                         ordersAppRef.current = initializeApp(appConfig);
                         ordersDbRef.current = getFirestore(ordersAppRef.current);
                         ordersAuthRef.current = getAuth(ordersAppRef.current);
@@ -152,17 +275,17 @@
                                         setAuthError(null);
                                         logDebug("onAuthStateChanged: User profile loaded from Firestore.", profileData);
                                     } else {
-                                        // User authenticated with Firebase, but no profile exists yet (e.g., brand new anonymous user)
-                                        // Use a temporary name/role until the user explicitly logs in or registers.
+                                        // User authenticated with Firebase, but no profile exists yet
                                         setUser(currentUser);
                                         setUserId(currentUser.uid);
-                                        setRole('orderer'); // Default role if no profile yet
-                                        logDebug("onAuthStateChanged: Firebase user, but no profile found. Defaulting role to orderer.");
+                                        setRole('orderer'); // Default role
+                                        logDebug("onAuthStateChanged: Firebase user, but no profile found in Firestore. Defaulting role to orderer.");
                                     }
                                 } catch (profileError) {
                                     console.error("onAuthStateChanged: Error fetching user profile:", profileError);
-                                    setAuthError(`Failed to load user profile: ${profileError.message}`);
-                                    setUser(currentUser); // Still set user but acknowledge profile error
+                                    // This error is critical as it affects logged-in user state.
+                                    setAuthError(`Failed to load user profile: ${profileError.message}. You may need to re-login.`);
+                                    setUser(currentUser);
                                     setUserId(currentUser.uid);
                                 }
                             } else {
@@ -184,13 +307,22 @@
                                 logDebug("AuthProvider: signInWithCustomToken attempt finished.");
                             } catch (error) {
                                 console.warn("AuthProvider: signInWithCustomToken failed. Error:", error);
-                                // Fall through: the onAuthStateChanged listener will handle currentUser == null,
-                                // and the anonymous sign-in logic will ensure a session is attempted.
+                                // Fall through to check for saved credentials or anonymous sign-in
                             }
                         }
 
-                        // Ensure an anonymous session is established if no user is already logged in (e.g., if custom token failed)
-                        // This allows basic Firestore operations even before explicit email/password login.
+                        // Check for saved credentials and attempt auto-login
+                        const savedCreds = getSavedCredentials();
+                        if (savedCreds && !ordersAuthRef.current.currentUser) {
+                            logDebug("AuthProvider: Found saved credentials, attempting auto-login...");
+                            const success = await attemptLogin(savedCreds.username, savedCreds.password);
+                            if (!success) {
+                                clearSavedCredentials(); // Clear if auto-login failed
+                                console.warn("AuthProvider: Auto-login with saved credentials failed, cleared.");
+                            }
+                        }
+
+                        // Ensure an anonymous session is established if no user is already logged in (e.g., if custom token or auto-login failed)
                         if (!ordersAuthRef.current.currentUser) {
                             try {
                                 logDebug("AuthProvider: No active Firebase user, attempting signInAnonymously as primary or fallback...");
@@ -215,92 +347,12 @@
                 initializeAndAuth();
             }, []); // Empty dependency array means this runs once on mount
 
-            const login = async (email, password, displayNameInput) => {
-                logDebug("AuthContext.login: Attempting login with email:", email, "and display name:", displayNameInput);
-                setAuthError(null); // Clear previous errors
-
-                if (!ordersAuthRef.current) {
-                    setAuthError("Firebase Auth not initialized.");
-                    return;
-                }
-                if (!ordersDbRef.current) {
-                    setAuthError("Firebase Firestore not initialized.");
-                    return;
-                }
-
-                try {
-                    // Try to sign in with email and password first
-                    let credential;
-                    try {
-                        credential = await signInWithEmailAndPassword(ordersAuthRef.current, email, password);
-                        logDebug("AuthContext.login: Signed in with email/password.");
-                    } catch (signInError) {
-                        if (signInError.code === 'auth/user-not-found' || signInError.code === 'auth/wrong-password') {
-                            // If user not found or wrong password, try to create account if displayName provided (acting as registration)
-                            if (displayNameInput) {
-                                logDebug("AuthContext.login: User not found or wrong password, attempting to create new account...");
-                                credential = await createUserWithEmailAndPassword(ordersAuthRef.current, email, password);
-                                logDebug("AuthContext.login: Account created with email/password.");
-                            } else {
-                                throw signInError; // If no display name, it's just a failed sign-in
-                            }
-                        } else {
-                            throw signInError; // Re-throw other sign-in errors
-                        }
-                    }
-
-                    const currentUser = credential.user;
-                    let newRole = 'orderer';
-                    let finalDisplayName = displayNameInput || "User"; // Use input name or default
-
-                    // Determine role based on typed display name (for first login/registration)
-                    if (displayNameInput) {
-                        if (displayNameInput.toLowerCase() === 'warehouse') {
-                            newRole = 'warehouse';
-                        } else if (displayNameInput.toLowerCase() === 'admin') {
-                            newRole = 'admin';
-                        }
-                    }
-
-                    // Check if user profile already exists in Firestore
-                    const userProfileRef = doc(ordersDbRef.current, `artifacts/${CANVAS_APP_ID}/users`, currentUser.uid);
-                    const userProfileSnap = await getDoc(userProfileRef);
-
-                    if (!userProfileSnap.exists()) {
-                        // If profile doesn't exist, create it with the selected name and role
-                        await setDoc(userProfileRef, {
-                            displayName: finalDisplayName,
-                            email: currentUser.email,
-                            role: newRole,
-                            createdAt: new Date().toISOString()
-                        });
-                        logDebug("AuthContext.login: Created new user profile in Firestore.");
-                    } else {
-                        // If profile exists, update local state with profile data (in case role was changed by admin)
-                        const profileData = userProfileSnap.data();
-                        newRole = profileData.role || 'orderer'; // Use role from Firestore
-                        finalDisplayName = profileData.displayName || finalDisplayName;
-                        logDebug("AuthContext.login: Loaded existing user profile from Firestore.");
-                    }
-
-                    setUser({ displayName: finalDisplayName, uid: currentUser.uid });
-                    setRole(newRole);
-                    setUserId(currentUser.uid); // Ensure userId is the Firebase UID
-                    setAuthError(null); // Clear any errors
-                    logDebug(`AuthContext.login: Final logged in as ${finalDisplayName} (${newRole}) with UID: ${currentUser.uid}`);
-
-                } catch (error) {
-                    console.error("AuthContext.login: Login/Registration failed:", error);
-                    setAuthError(`Login/Registration failed: ${error.message}`);
-                    // Fallback to anonymous if email/password fails, but keep error message
-                    try {
-                        await signInAnonymously(ordersAuthRef.current);
-                        logDebug("AuthContext.login: Falling back to anonymous sign-in after failed email/password.");
-                        // onAuthStateChanged will handle the state update for anonymous user
-                    } catch (anonError) {
-                        console.error("AuthContext.login: Anonymous fallback also failed:", anonError);
-                        setAuthError(prev => `${prev}\nCritical: Anonymous sign-in also failed.`);
-                    }
+            const login = async (username, password, rememberMe) => {
+                const success = await attemptLogin(username, password);
+                if (success) {
+                    saveCredentials(username, password, rememberMe);
+                } else {
+                    // Do not clear authError here, as it's meant to be displayed by LoginScreen
                 }
             };
 
@@ -308,9 +360,10 @@
                 logDebug("AuthContext.logout: Attempting logout.");
                 try {
                     await signOut(ordersAuthRef.current); // Sign out from Firebase Auth
+                    clearSavedCredentials(); // Clear saved credentials on logout
                     // After Firebase signOut, onAuthStateChanged listener will fire with null user,
                     // which will clear local user state and set a new random userId.
-                    logDebug("AuthContext.logout: Signed out from Firebase Auth.");
+                    logDebug("AuthContext.logout: Signed out from Firebase Auth and cleared saved credentials.");
                 } catch (error) {
                     console.error("AuthContext.logout: Error signing out:", error);
                     setAuthError(`Logout failed: ${error.message}`);
@@ -322,10 +375,11 @@
                     user,
                     role,
                     userId,
-                    login, // Now accepts email, password, and displayName
+                    login,
                     logout,
                     loading,
                     authError,
+                    setAuthError, // Expose setAuthError so LoginScreen can clear it
                     ordersDb: ordersDbRef.current,
                     ordersAuth: ordersAuthRef.current,
                     CANVAS_APP_ID
@@ -478,14 +532,17 @@
                 );
             }
 
-            // Only display authError if loading is false (meaning all auth attempts are done)
-            if (authError && !loading) {
-                logDebug("App: Displaying authentication error screen. Error:", authError);
+            // Only display critical app-level authError if user is NOT authenticated
+            // This prevents the full-screen error from hijacking the login flow
+            // when it's just a login attempt error. LoginScreen handles its own errors now.
+            if (!user && authError && !loading) {
+                 logDebug("App: Displaying critical authentication error screen. Error:", authError);
                 return (
                     <div className="flex flex-col items-center justify-center min-h-screen bg-red-50 text-red-800 p-6 rounded-lg shadow-md m-4">
                         <h1 className="text-3xl font-bold mb-4">Authentication Error!</h1>
                         <p className="text-lg text-center mb-4">{authError}</p>
-                        <p className="text-md">Please check your Firebase configuration and network connection.</p>
+                        <p className="text-md">This is a critical error preventing the app from starting properly.</p>
+                        <p className="text-md">Please ensure Firebase Email/Password and Anonymous methods are enabled in your project settings.</p>
                     </div>
                 );
             }
@@ -494,7 +551,7 @@
             if (!user || !user.displayName) {
                 logDebug("App: Displaying LoginScreen. User state:", user);
                 // Pass the 'login' function directly from AuthContext to LoginScreen
-                return <LoginScreen onLogin={login} showUserModal={showUserModal} />;
+                return <LoginScreen onLogin={login} showUserModal={showUserModal} authError={authError} setAuthError={useContext(AuthContext).setAuthError} />;
             }
 
             const headerNavItems = [
@@ -517,7 +574,7 @@
                                             key={item.id}
                                             onClick={() => setCurrentPage(item.id)}
                                             className={`px-4 py-2 rounded-md transition-colors duration-200 m-1
-                                                        ${currentPage === item.id ? 'bg-blue-600' : 'hover:bg-gray-700'}`}
+                                                         ${currentPage === item.id ? 'bg-blue-600' : 'hover:bg-gray-700'}`}
                                         >
                                             {item.label}
                                         </button>
@@ -594,27 +651,43 @@
         };
 
         {/* Login Screen Component */}
-        const LoginScreen = ({ onLogin, showUserModal }) => {
-            const [email, setEmail] = useState('');
+        const LoginScreen = ({ onLogin, showUserModal, authError, setAuthError }) => {
+            const [username, setUsername] = useState('');
             const [password, setPassword] = useState('');
-            const [displayName, setDisplayName] = useState(''); // New: for initial user name input
             const [isRegisterMode, setIsRegisterMode] = useState(false);
+            const [rememberMe, setRememberMe] = useState(false);
+
+            // Auto-fill from localStorage on mount
+            useEffect(() => {
+                const savedCreds = getSavedCredentials();
+                if (savedCreds) {
+                    setUsername(savedCreds.username);
+                    setPassword(savedCreds.password);
+                    setRememberMe(savedCreds.rememberMe);
+                }
+            }, []);
+
+            // Watch for authentication errors from AuthContext and display them as a modal
+            useEffect(() => {
+                if (authError) {
+                    showUserModal(authError, 'error', () => {
+                        setAuthError(null); // Clear error when modal is closed
+                    });
+                }
+            }, [authError, showUserModal, setAuthError]);
+
 
             const handleSubmit = async (e) => {
                 e.preventDefault();
-                if (!email || !password) {
-                    showUserModal("Please enter both email and password.", "error");
+                setAuthError(null); // Clear any existing error message before new attempt
+
+                if (!username || !password) {
+                    showUserModal("Please enter both username and password.", "error");
                     return;
                 }
 
-                try {
-                    // Pass all necessary info to the login function in AuthContext
-                    await onLogin(email, password, displayName); // displayName is optional for existing logins
-                } catch (error) {
-                    // Error handling is primarily done in AuthProvider now, but this is a fallback.
-                    console.error("LoginScreen: Login/Registration submission error:", error);
-                    showUserModal(`An unexpected error occurred during login/registration: ${error.message}`, "error");
-                }
+                // onLogin already handles Firebase errors and sets authError in AuthContext
+                await onLogin(username, password, rememberMe);
             };
 
             return (
@@ -626,13 +699,13 @@
                         </p>
                         <form onSubmit={handleSubmit} className="space-y-6">
                             <div>
-                                <label htmlFor="email" className="sr-only">Email</label>
+                                <label htmlFor="username" className="sr-only">Username</label>
                                 <input
-                                    type="email"
-                                    id="email"
-                                    value={email}
-                                    onChange={(e) => setEmail(e.target.value)}
-                                    placeholder="Enter your email"
+                                    type="text"
+                                    id="username"
+                                    value={username}
+                                    onChange={(e) => setUsername(e.target.value)}
+                                    placeholder="Enter your username"
                                     className="w-full px-5 py-3 border border-gray-300 rounded-lg shadow-sm focus:ring-blue-500 focus:border-blue-500 text-lg placeholder-gray-500"
                                     required
                                 />
@@ -649,20 +722,21 @@
                                     required
                                 />
                             </div>
-                            {isRegisterMode && (
-                                <div>
-                                    <label htmlFor="displayName" className="sr-only">Your Name (for profile & role)</label>
+                            <div className="flex items-center justify-between">
+                                <div className="flex items-center">
                                     <input
-                                        type="text"
-                                        id="displayName"
-                                        value={displayName}
-                                        onChange={(e) => setDisplayName(e.target.value)}
-                                        placeholder="Enter your name (e.g., John Doe, warehouse, admin)"
-                                        className="w-full px-5 py-3 border border-gray-300 rounded-lg shadow-sm focus:ring-blue-500 focus:border-blue-500 text-lg placeholder-gray-500"
-                                        required
+                                        id="remember-me"
+                                        name="remember-me"
+                                        type="checkbox"
+                                        checked={rememberMe}
+                                        onChange={(e) => setRememberMe(e.target.checked)}
+                                        className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
                                     />
+                                    <label htmlFor="remember-me" className="ml-2 block text-gray-900 text-base">
+                                        Remember me
+                                    </label>
                                 </div>
-                            )}
+                            </div>
                             <button
                                 type="submit"
                                 className="w-full bg-blue-600 text-white py-3 px-6 rounded-lg text-xl font-semibold hover:bg-blue-700 transition-colors duration-300 transform hover:-translate-y-1 shadow-lg"
@@ -674,7 +748,10 @@
                             {isRegisterMode ? "Already have an account?" : "Don't have an account?"}{' '}
                             <button
                                 type="button"
-                                onClick={() => setIsRegisterMode(!isRegisterMode)}
+                                onClick={() => {
+                                    setIsRegisterMode(!isRegisterMode);
+                                    setAuthError(null); // Clear error if switching modes
+                                }}
                                 className="text-blue-600 hover:text-blue-800 font-semibold transition-colors duration-200"
                             >
                                 {isRegisterMode ? "Log In here" : "Register here"}
@@ -682,7 +759,7 @@
                         </p>
                         {isRegisterMode && (
                             <p className="mt-2 text-gray-500 text-sm">
-                                For roles, type "warehouse" or "admin" as your name during registration.
+                                For roles, type "warehouse" or "admin" as your username during registration.
                             </p>
                         )}
                     </div>
@@ -878,7 +955,7 @@
                                     <button
                                         onClick={() => setIsAddItemModalOpen(false)}
                                         className="px-6 py-2 bg-gray-300 text-gray-800 rounded-md hover:bg-gray-400 transition-colors duration-200 font-semibold"
-                                >
+                                    >
                                         Cancel
                                     </button>
                                     <button
@@ -1358,10 +1435,10 @@
                                     </div>
                                     <span className={`px-3 py-1 rounded-full text-sm font-semibold
                                         ${order.orderStatus === 'Placed' ? 'bg-blue-100 text-blue-800' :
-                                          order.orderStatus === 'Processing' ? 'bg-yellow-100 text-yellow-800' :
-                                          order.orderStatus === 'Completed' ? 'bg-green-100 text-green-800' :
-                                          order.orderStatus === 'Cancelled' ? 'bg-red-100 text-red-800' :
-                                          'bg-gray-100 text-gray-800'
+                                            order.orderStatus === 'Processing' ? 'bg-yellow-100 text-yellow-800' :
+                                            order.orderStatus === 'Completed' ? 'bg-green-100 text-green-800' :
+                                            order.orderStatus === 'Cancelled' ? 'bg-red-100 text-red-800' :
+                                            'bg-gray-100 text-gray-800'
                                         }`}
                                     >
                                         Status: {order.orderStatus || 'Unknown'}
@@ -1420,6 +1497,7 @@
                                                         src={item.imageUrl || `https://placehold.co/50x50/e0e0e0/000000?text=No+Img`}
                                                         alt={item.name}
                                                         className="w-12 h-12 object-contain rounded-sm mr-3"
+                                                        onError={(e) => { e.target.onerror = null; e.target.src = `https://placehold.co/50x50/e0e0e0/000000?text=Image+Error`; }}
                                                     />
                                                     <div className="flex-grow">
                                                         <p className="font-medium text-gray-800">{item.name} (x{item.quantity})</p>
@@ -1677,10 +1755,11 @@
                                     </div>
                                     <span className={`px-3 py-1 rounded-full text-sm font-semibold
                                         ${order.orderStatus === 'Placed' ? 'bg-blue-100 text-blue-800' :
-                                          order.orderStatus === 'Processing' ? 'bg-yellow-100 text-yellow-800' :
-                                          order.orderStatus === 'Completed' ? 'bg-green-100 text-green-800' :
-                                          order.orderStatus === 'Cancelled' ? 'bg-red-100 text-red-800' :
-                                          'bg-gray-100 text-gray-800'
+                                            order.orderStatus === 'Processing' ? 'bg-yellow-100 text-yellow-800' :
+                                            order.orderStatus === 'Ready for Pickup' ? 'bg-indigo-100 text-indigo-800' :
+                                            order.orderStatus === 'Completed' ? 'bg-green-100 text-green-800' :
+                                            order.orderStatus === 'Cancelled' ? 'bg-red-100 text-red-800' :
+                                            'bg-gray-100 text-gray-800'
                                         }`}
                                     >
                                         Status: {order.orderStatus || 'Unknown'}
@@ -1752,6 +1831,7 @@
                                                             src={item.imageUrl || `https://placehold.co/50x50/e0e0e0/000000?text=No+Img`}
                                                             alt={item.name}
                                                             className="w-12 h-12 object-contain rounded-sm mr-3"
+                                                            onError={(e) => { e.target.onerror = null; e.target.src = `https://placehold.co/50x50/e0e0e0/000000?text=Image+Error`; }}
                                                         />
                                                         <div className="flex-grow">
                                                             <p className="font-medium text-gray-800">{item.name} (x{item.quantity})</p>
@@ -1804,7 +1884,8 @@
                                         onKeyPress={(e) => {
                                             if (e.key === 'Enter' && !e.shiftKey) { // Send on Enter, allow Shift+Enter for newline
                                                 e.preventDefault();
-                                                handleReplyToFollowUp(e.target.value);
+                                                // Call handleReplyToFollowUp with selectedOrder.id and the textarea value
+                                                handleReplyToFollowUp(selectedOrder.id, e.target.value);
                                                 e.target.value = ''; // Clear after sending
                                             }
                                         }}
@@ -1838,16 +1919,18 @@
 
 
         {/* Render the App */}
-        ReactDOM.render(
-            <React.StrictMode>
-                <ErrorBoundary>
-                    <AuthProvider>
-                        <App />
-                    </AuthProvider>
-                </ErrorBoundary>
-            </React.StrictMode>,
-            document.getElementById('root')
-        );
+        window.onload = function() {
+            ReactDOM.render(
+                <React.StrictMode>
+                    <ErrorBoundary>
+                        <AuthProvider>
+                            <App />
+                        </AuthProvider>
+                    </ErrorBoundary>
+                </React.StrictMode>,
+                document.getElementById('root')
+            );
+        };
     </script>
 </body>
 </html>

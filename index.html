@@ -76,6 +76,7 @@
 
         // Firebase Configuration for the NEW 'dlvorders' project
         const ordersFirebaseConfig = {
+            // !!! IMPORTANT: Verify this apiKey matches the Web API Key from your 'dlvorders' Firebase project settings !!!
             apiKey: "AIzaSyArtDGiH3YtVc7Ro43limWa1cCULnVXp4w",
             authDomain: "dlvorders.firebaseapp.com",
             projectId: "dlvorders",
@@ -181,19 +182,19 @@
                 try {
                     let credential;
                     try {
-                        logDebug("AuthContext.attemptLogin: Attempting signInWithEmailAndPassword using dummy email:", firebaseEmail);
+                        logDebug(`AuthContext.attemptLogin: Attempting signInWithEmailAndPassword for email: ${firebaseEmail}`);
                         credential = await signInWithEmailAndPassword(ordersAuthRef.current, firebaseEmail, password);
                         logDebug("AuthContext.attemptLogin: Signed in with username/password.");
                     } catch (signInError) {
                         if (signInError.code === 'auth/user-not-found' || signInError.code === 'auth/wrong-password') {
                             // If user not found or wrong password, attempt to create account
-                            logDebug("AuthContext.attemptLogin: User not found or wrong password, attempting to create new account with username:", username);
+                            logDebug(`AuthContext.attemptLogin: User not found or wrong password for ${username}, attempting to create new account.`);
                             credential = await createUserWithEmailAndPassword(ordersAuthRef.current, firebaseEmail, password);
                             logDebug("AuthContext.attemptLogin: Account created with username/password.");
                         } else {
                             // Catch any other Firebase auth errors here and set the message
                             console.error("AuthContext.attemptLogin: Firebase error:", signInError);
-                            setAuthError(`Login/Registration failed: ${signInError.message}`);
+                            setAuthError(`Login/Registration failed: ${signInError.message}. Make sure password is at least 6 characters.`);
                             return false;
                         }
                     }
@@ -239,7 +240,7 @@
                 } catch (error) {
                     // Catch any non-Firebase or unexpected errors during profile loading/saving
                     console.error("AuthContext.attemptLogin: General login/profile error:", error);
-                    setAuthError(`An unexpected error occurred: ${error.message}`);
+                    setAuthError(`An unexpected error occurred during login/registration: ${error.message}`);
                     return false; // Indicate failure
                 }
             };
@@ -330,7 +331,7 @@
                                 logDebug("AuthProvider: signInAnonymously attempt finished successfully.");
                             } catch (error) {
                                 console.error("AuthProvider: signInAnonymously also failed:", error);
-                                setAuthError(`Firebase Authentication failed: ${error.message}. Please enable Email/Password and Anonymous sign-in methods in your 'dlvorders' Firebase project's Authentication settings.`);
+                                setAuthError(`Firebase Authentication failed: ${error.message}. Please ensure Email/Password and Anonymous sign-in methods are enabled in your 'dlvorders' Firebase project's Authentication settings, and that the API Key in the code is correct.`);
                                 setLoading(false); // Critical: stop loading here if *all* auth attempts fail
                             }
                         }
@@ -339,7 +340,7 @@
                     } catch (initializationError) {
                         // Catches errors during initializeApp itself (e.g., bad firebase config or network)
                         console.error("AuthProvider: Critical error during Firebase app initialization:", initializationError);
-                        setAuthError(`Firebase initialization error: ${initializationError.message}. Double-check your Firebase config and network connection.`);
+                        setAuthError(`Firebase initialization error: ${initializationError.message}. Double-check your Firebase config (API Key, Project ID) and network connection.`);
                         setLoading(false); // Must stop loading if initialization fails
                     }
                 };

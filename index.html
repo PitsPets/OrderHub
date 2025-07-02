@@ -15,7 +15,7 @@
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/9.22.0/firebase-app.js";
         window.initializeApp = initializeApp;
-        import { getFirestore, collection, getDocs, doc, setDoc, addDoc, onSnapshot, query, where, updateDoc, writeBatch, serverTimestamp } from "https://www.gstatic.com/firebasejs/9.22.0/firebase-firestore.js";
+        import { getFirestore, collection, getDocs, doc, setDoc, addDoc, onSnapshot, query, where, updateDoc, writeBatch, serverTimestamp, deleteDoc } from "https://www.gstatic.com/firebasejs/9.22.0/firebase-firestore.js";
         window.getFirestore = getFirestore;
         window.collection = collection;
         window.getDocs = getDocs;
@@ -28,6 +28,7 @@
         window.updateDoc = updateDoc;
         window.writeBatch = writeBatch;
         window.serverTimestamp = serverTimestamp;
+        window.deleteDoc = deleteDoc;
         import { getAuth, signInAnonymously } from "https://www.gstatic.com/firebasejs/9.22.0/firebase-auth.js";
         window.getAuth = getAuth;
         window.signInAnonymously = signInAnonymously;
@@ -110,6 +111,13 @@
                 match /public/data/inventory_overrides/{itemId=**} {
                   allow read, write: if request.auth != null;
                 }
+                // NEW: Allow any authenticated user to manage the users collection.
+                // In a production app with non-anonymous users, this should be restricted to admins.
+                // e.g., allow read, write: if request.auth.token.role == 'admin';
+                // For this app, access control is handled on the client-side by hiding the UI.
+                match /public/data/users/{userId=**} {
+                    allow read, write: if request.auth != null;
+                }
               }
             }
 
@@ -140,25 +148,7 @@
             const [modal, setModal] = useState({ isOpen: false, message: '', onConfirm: null });
             const [firebaseInstances, setFirebaseInstances] = useState(null);
             const [newOrderCount, setNewOrderCount] = useState(0);
-            const [users, setUsers] = useState(() => {
-                try {
-                    const savedUsers = localStorage.getItem('dlv_users');
-                    if (savedUsers) {
-                        return JSON.parse(savedUsers);
-                    }
-                    // Initial default users
-                    const defaultUsers = [
-                        { id: '1', username: 'Admin', pin: '1234', role: 'admin' },
-                        { id: '2', username: 'Warehouse', pin: '5678', role: 'warehouse' },
-                        { id: '3', username: 'John', pin: '1111', role: 'orderer' },
-                    ];
-                    localStorage.setItem('dlv_users', JSON.stringify(defaultUsers));
-                    return defaultUsers;
-                } catch (error) {
-                    console.error("Error initializing users from localStorage:", error);
-                    return [];
-                }
-            });
+            const [users, setUsers] = useState([]);
 
             // Initialize Firebase connections
             useEffect(() => {
@@ -186,6 +176,44 @@
                 initializeFirebase();
             }, []);
 
+            // Fetch users from Firestore in real-time
+            useEffect(() => {
+                if (!firebaseInstances) return;
+
+                const usersCol = window.collection(firebaseInstances.primaryDb, '/public/data/users');
+                const unsubscribe = window.onSnapshot(usersCol, (snapshot) => {
+                    const usersData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+                    setUsers(usersData);
+
+                    // Seed initial data if collection is empty
+                    if (snapshot.empty) {
+                        console.log("No users found in Firestore. Seeding initial data...");
+                        const defaultUsers = [
+                            { username: 'Admin', pin: '1234', role: 'admin' },
+                            { username: 'Warehouse', pin: '5678', role: 'warehouse' },
+                            { username: 'John', pin: '1111', role: 'orderer' },
+                        ];
+                        const batch = window.writeBatch(firebaseInstances.primaryDb);
+                        defaultUsers.forEach(user => {
+                            const docRef = window.doc(usersCol);
+                            batch.set(docRef, user);
+                        });
+                        batch.commit().catch(err => console.error("Error seeding users:", err));
+                    }
+
+                }, (error) => {
+                    console.error("Error fetching users:", error);
+                    if (error.code === 'permission-denied') {
+                        showModal("Could not load user accounts due to a permissions issue. Please update the security rules for the 'dlvorders' project in your Firebase Console and refresh the page.");
+                    } else {
+                        showModal("Could not load user accounts from the database.");
+                    }
+                });
+
+                return () => unsubscribe();
+
+            }, [firebaseInstances]);
+
             const login = (username, pin) => {
                 const foundUser = users.find(u => u.username.toLowerCase() === username.toLowerCase() && u.pin === pin);
                 if (foundUser) {
@@ -202,23 +230,26 @@
                 sessionStorage.removeItem('dlv_user');
                 sessionStorage.removeItem('dlv_cart'); // Clear cart on logout
             };
-
-            const updateUserList = (newUsers) => {
-                setUsers(newUsers);
-                localStorage.setItem('dlv_users', JSON.stringify(newUsers));
-            };
             
             // Check for persisted session on load
             useEffect(() => {
                 try {
-                    const savedUser = sessionStorage.getItem('dlv_user');
-                    if (savedUser) {
-                        setUser(JSON.parse(savedUser));
+                    const savedUserJSON = sessionStorage.getItem('dlv_user');
+                    if (savedUserJSON) {
+                        const savedUser = JSON.parse(savedUserJSON);
+                        // Re-validate user against the fresh list from Firestore
+                        const currentUserInDb = users.find(u => u.id === savedUser.id);
+                        if(currentUserInDb) {
+                            setUser(currentUserInDb);
+                        } else {
+                            // User was deleted while session was active
+                            logout();
+                        }
                     }
                 } catch (error) {
                     console.error("Error reading user session:", error);
                 }
-            }, []);
+            }, [users]); // Rerun when users list is updated
 
 
             const showModal = (message, onConfirm = null) => {
@@ -234,7 +265,6 @@
                 users,
                 login,
                 logout,
-                updateUserList,
                 loading,
                 firebaseInstances,
                 modal,
@@ -436,12 +466,13 @@
         };
 
         const UserManagementPage = () => {
-            const { users, updateUserList, showModal } = useAppContext();
+            const { users, firebaseInstances, showModal } = useAppContext();
             const [editingUser, setEditingUser] = useState(null);
             const [newUser, setNewUser] = useState({ username: '', pin: '', role: 'orderer' });
 
-            const handleAddUser = (e) => {
+            const handleAddUser = async (e) => {
                 e.preventDefault();
+                if (!firebaseInstances) return;
                 if (!newUser.username || !newUser.pin || newUser.pin.length !== 4) {
                     showModal("Please provide a username and a 4-digit PIN.");
                     return;
@@ -450,25 +481,49 @@
                     showModal("A user with this username already exists.");
                     return;
                 }
-                const newId = users.length > 0 ? (Math.max(...users.map(u => parseInt(u.id))) + 1).toString() : '1';
-                updateUserList([...users, { ...newUser, id: newId }]);
-                setNewUser({ username: '', pin: '', role: 'orderer' });
-                showModal("User added successfully!");
+
+                try {
+                    const usersCol = window.collection(firebaseInstances.primaryDb, '/public/data/users');
+                    await window.addDoc(usersCol, newUser);
+                    setNewUser({ username: '', pin: '', role: 'orderer' });
+                    showModal("User added successfully!");
+                } catch (error) {
+                    console.error("Error adding user:", error);
+                    showModal("Failed to add user.");
+                }
             };
 
-            const handleUpdateUser = () => {
+            const handleUpdateUser = async () => {
+                if (!firebaseInstances) return;
                 if (!editingUser.pin || editingUser.pin.length !== 4) {
                     showModal("PIN must be 4 digits.");
                     return;
                 }
-                updateUserList(users.map(u => u.id === editingUser.id ? editingUser : u));
-                setEditingUser(null);
-                showModal("User updated successfully!");
+                try {
+                    const userDoc = window.doc(firebaseInstances.primaryDb, '/public/data/users', editingUser.id);
+                    await window.updateDoc(userDoc, {
+                        pin: editingUser.pin,
+                        role: editingUser.role
+                    });
+                    setEditingUser(null);
+                    showModal("User updated successfully!");
+                } catch (error) {
+                    console.error("Error updating user:", error);
+                    showModal("Failed to update user.");
+                }
             };
 
             const handleDeleteUser = (userId) => {
-                showModal("Are you sure you want to delete this user?", () => {
-                    updateUserList(users.filter(u => u.id !== userId));
+                 if (!firebaseInstances) return;
+                showModal("Are you sure you want to delete this user?", async () => {
+                    try {
+                        const userDoc = window.doc(firebaseInstances.primaryDb, '/public/data/users', userId);
+                        await window.deleteDoc(userDoc);
+                        showModal("User deleted successfully.");
+                    } catch (error) {
+                        console.error("Error deleting user:", error);
+                        showModal("Failed to delete user.");
+                    }
                 });
             };
 
@@ -476,7 +531,6 @@
                 <div className="p-8">
                     <h2 className="text-3xl font-bold mb-6">User Management</h2>
                     
-                    {/* Add User Form */}
                     <div className="bg-white p-6 rounded-lg shadow-md mb-8">
                         <h3 className="text-xl font-semibold mb-4">Add New User</h3>
                         <form onSubmit={handleAddUser} className="grid grid-cols-1 md:grid-cols-4 gap-4 items-end">
@@ -491,7 +545,6 @@
                         </form>
                     </div>
 
-                    {/* User List */}
                     <div className="bg-white p-6 rounded-lg shadow-md">
                         <h3 className="text-xl font-semibold mb-4">Existing Users</h3>
                         <div className="space-y-4">

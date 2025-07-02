@@ -4,1934 +4,1122 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>DLV Order Hub</title>
-    <!-- Tailwind CSS CDN -->
+    <!-- Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
-    <!-- Google Fonts - Inter -->
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
-    <!-- Font Awesome for icons -->
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
+    <!-- React -->
+    <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    <!-- Babel -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <!-- Firebase -->
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/9.22.0/firebase-app.js";
+        window.initializeApp = initializeApp;
+        import { getFirestore, collection, getDocs, doc, setDoc, addDoc, onSnapshot, query, where, updateDoc, writeBatch, serverTimestamp } from "https://www.gstatic.com/firebasejs/9.22.0/firebase-firestore.js";
+        window.getFirestore = getFirestore;
+        window.collection = collection;
+        window.getDocs = getDocs;
+        window.doc = doc;
+        window.setDoc = setDoc;
+        window.addDoc = addDoc;
+        window.onSnapshot = onSnapshot;
+        window.query = query;
+        window.where = where;
+        window.updateDoc = updateDoc;
+        window.writeBatch = writeBatch;
+        window.serverTimestamp = serverTimestamp;
+        import { getAuth, signInAnonymously } from "https://www.gstatic.com/firebasejs/9.22.0/firebase-auth.js";
+        window.getAuth = getAuth;
+        window.signInAnonymously = signInAnonymously;
+    </script>
+    <!-- Custom Font -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
     <style>
-        body {
-            font-family: 'Inter', sans-serif;
-            background-color: #f8fafc; /* Light gray background */
+        body { font-family: 'Inter', sans-serif; }
+        .modal-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background-color: rgba(0, 0, 0, 0.5);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 50;
         }
-        /* Custom scrollbar for better aesthetics */
-        ::-webkit-scrollbar {
-            width: 8px;
+        .modal-content {
+            background-color: white;
+            padding: 2rem;
+            border-radius: 0.5rem;
+            box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
+            max-width: 90%;
+            width: 500px;
         }
-        ::-webkit-scrollbar-track {
-            background: #f1f1f1;
-            border-radius: 10px;
+        .animate-spin {
+            animation: spin 1s linear infinite;
         }
-        ::-webkit-scrollbar-thumb {
-            background: #888;
-            border-radius: 10px;
-        }
-        ::-webkit-scrollbar-thumb:hover {
-            background: #555;
-            border-radius: 10px;
+        @keyframes spin {
+            from { transform: rotate(0deg); }
+            to { transform: rotate(360deg); }
         }
     </style>
 </head>
-<body>
+<body class="bg-gray-100">
     <div id="root"></div>
 
-    <!-- Babel Standalone for in-browser JSX transformation -->
-    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
-    <!-- React and ReactDOM CDNs -->
-    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
-    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
-
-    <!-- Global variables and Firebase module exposure (ensure these run first) -->
-    <script>
-        // Define global variables provided by the Canvas environment (or defaults)
-        // These are set directly on the window object to ensure immediate global availability
-        window.__app_id = typeof __app_id !== 'undefined' ? __app_id : 'default-canvas-app-id';
-        window.__firebase_config = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : null;
-        window.__initial_auth_token = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
-    </script>
-
-    <!-- Firebase CDNs and module imports (runs after global variables are set) -->
-    <script type="module">
-        // Import Firebase modules
-        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
-        // Add signInWithEmailAndPassword, createUserWithEmailAndPassword
-        import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
-        import { getFirestore, collection, query, onSnapshot, doc, getDoc, setDoc, addDoc, updateDoc, deleteDoc, where, getDocs } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
-
-        // Expose Firebase modules globally after they are imported
-        window.FirebaseApp = { initializeApp };
-        // Expose new auth methods
-        window.FirebaseAuth = { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut };
-        window.Firestore = { getFirestore, collection, query, onSnapshot, doc, getDoc, setDoc, addDoc, updateDoc, deleteDoc, where, getDocs };
-    </script>
-
     <script type="text/babel">
-        // Now, these variables and modules should be correctly accessible from the window object
-        const { useState, useEffect, createContext, useContext, useRef } = React;
-        const { initializeApp } = window.FirebaseApp;
-        // Destructure new auth methods
-        const { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut } = window.FirebaseAuth;
-        const { getFirestore, collection, query, onSnapshot, doc, getDoc, setDoc, addDoc, updateDoc, deleteDoc, where, getDocs } = window.Firestore;
+        const { useState, useEffect, createContext, useContext, useReducer } = React;
 
-        // Firebase Configuration for the NEW 'dlvorders' project
-        const ordersFirebaseConfig = {
-            // !!! IMPORTANT: Verify this apiKey matches the Web API Key from your 'dlvorders' Firebase project settings !!!
+        // --- Firebase Configuration ---
+        
+        // Primary Database (Read/Write)
+        const primaryFirebaseConfig = {
             apiKey: "AIzaSyArtDGiH3YtVc7Ro43limWa1cCULnVXp4w",
             authDomain: "dlvorders.firebaseapp.com",
             projectId: "dlvorders",
-            storageBucket: "dlvorders.firebasestorage.app",
+            storageBucket: "dlvorders.appspot.com",
             messagingSenderId: "69353305480",
-            appId: "1:69353305480:web:582133ff862edbfbb8763d",
+            appId: "1:69353305480:web:582133ff862edbfbb8763d"
         };
 
-        // Firebase Configuration for the EXISTING 'dlv-warehouse-tracker' project
-        const EXISTING_FIREBASE_CONFIG = {
-            apiKey: "AIzaSyC9Tf7tOlZhYNe6ubDZ7JFJhsMswiimxPw", // Your actual API key
-            authDomain: "dlv-warehouse-tracker.firebaseapp.com", // Your actual auth domain
-            projectId: "dlv-warehouse-tracker", // This is the projectId for your 'dlv-warehouse-tracker' project
-            storageBucket: "dlv-warehouse-tracker.firebasestorage.app",
-            messagingSenderId: "267729758583", // Your actual sender ID
-            appId: "1:267729758583:web:f5f7ca26afc99c17819972", // Your actual app ID
+        // Secondary Database (Read-Only)
+        const secondaryFirebaseConfig = {
+            apiKey: "AIzaSyC9Tf7tOlZhYNe6ubDZ7JFJhsMswiimxPw",
+            authDomain: "dlv-warehouse-tracker.firebaseapp.com",
+            projectId: "dlv-warehouse-tracker",
+            storageBucket: "dlv-warehouse-tracker.appspot.com",
+            messagingSenderId: "267729758583",
+            appId: "1:267729758583:web:f5f7ca26afc99c17819972"
         };
-
-        // Crucial for path matching in the dlv-warehouse-tracker project
-        const WAREHOUSE_TRACKER_DATA_APP_ID = 'default-app-id';
-
-        // Global Canvas environment variables (now correctly accessed from window)
-        const CANVAS_APP_ID = window.__app_id;
-        const CANVAS_FIREBASE_CONFIG = window.__firebase_config;
-        const CANVAS_INITIAL_AUTH_TOKEN = window.__initial_auth_token;
-
-        // Helper for debug logging
-        const DEBUG_MODE = localStorage.getItem('DLV_DEBUG') === 'true';
-        const logDebug = (...args) => {
-            if (DEBUG_MODE) {
-                console.log('[DLV_DEBUG]', ...args);
+        
+        // --- Firebase Security Rules Documentation ---
+        /*
+            For Primary Database ('dlvorders'):
+            // These rules allow any anonymously authenticated user to read and write.
+            // This is suitable for an internal tool where access is controlled by the app's PIN system.
+            rules_version = '2';
+            service cloud.firestore {
+              match /databases/{database}/documents {
+                // Allow read/write access to orders and inventory overrides for any user
+                match /orders/{orderId=**} {
+                  allow read, write: if request.auth != null;
+                }
+                match /public/data/inventory_overrides/{itemId=**} {
+                  allow read, write: if request.auth != null;
+                }
+              }
             }
-        };
 
-        // --- Utility functions for local storage persistence (Base64 for basic obfuscation) ---
-        const LOCAL_STORAGE_KEY_USERNAME = 'dlv_username';
-        const LOCAL_STORAGE_KEY_PASSWORD = 'dlv_password'; // Storing password directly is not recommended for high security apps
-        const LOCAL_STORAGE_KEY_REMEMBER_ME = 'dlv_remember_me';
-
-        const saveCredentials = (username, password, rememberMe) => {
-            if (rememberMe) {
-                localStorage.setItem(LOCAL_STORAGE_KEY_USERNAME, btoa(username)); // Base64 encode
-                localStorage.setItem(LOCAL_STORAGE_KEY_PASSWORD, btoa(password)); // Base64 encode
-                localStorage.setItem(LOCAL_STORAGE_KEY_REMEMBER_ME, 'true');
-            } else {
-                clearSavedCredentials();
+            For Secondary Database ('dlv-warehouse-tracker'):
+            // These rules enforce strict read-only access to the specified public data path.
+            // This protects the master data from being altered by this application.
+            rules_version = '2';
+            service cloud.firestore {
+              match /databases/{database}/documents {
+                // Deny all writes by default
+                match /{document=**} {
+                  allow write: if false;
+                }
+                // Allow read access only to the specific public data path
+                match /artifacts/default-app-id/public/data/{collection}/{document=**} {
+                  allow read: if true;
+                }
+              }
             }
-        };
+        */
 
-        const getSavedCredentials = () => {
-            const rememberMe = localStorage.getItem(LOCAL_STORAGE_KEY_REMEMBER_ME) === 'true';
-            if (rememberMe) {
-                const username = localStorage.getItem(LOCAL_STORAGE_KEY_USERNAME);
-                const password = localStorage.getItem(LOCAL_STORAGE_KEY_PASSWORD);
-                return username && password ? {
-                    username: atob(username), // Base64 decode
-                    password: atob(password), // Base64 decode
-                    rememberMe: true
-                } : null;
-            }
-            return null;
-        };
+        // --- Context for App State ---
+        const AppContext = createContext();
 
-        const clearSavedCredentials = () => {
-            localStorage.removeItem(LOCAL_STORAGE_KEY_USERNAME);
-            localStorage.removeItem(LOCAL_STORAGE_KEY_PASSWORD);
-            localStorage.removeItem(LOCAL_STORAGE_KEY_REMEMBER_ME);
-        };
-
-
-        // --- Context for Authentication ---
-        const AuthContext = createContext(null);
-
-        const AuthProvider = ({ children }) => {
+        const AppProvider = ({ children }) => {
             const [user, setUser] = useState(null);
-            const [role, setRole] = useState('orderer'); // 'orderer', 'warehouse', 'admin'
-            const [userId, setUserId] = useState(null);
             const [loading, setLoading] = useState(true);
-            const [authError, setAuthError] = useState(null); // Exposed to children for specific error display
-
-            // Firebase instances for the 'dlvorders' project
-            const ordersAppRef = useRef(null);
-            const ordersDbRef = useRef(null);
-            const ordersAuthRef = useRef(null);
-
-            // Function to attempt login, now handling persistence
-            const attemptLogin = async (username, password) => {
-                logDebug("AuthContext.attemptLogin: Attempting login with username:", username);
-                setAuthError(null); // Clear previous errors at the start of a new attempt
-
-                if (!ordersAuthRef.current) {
-                    setAuthError("Firebase Auth not initialized. Please refresh the page.");
-                    return false;
-                }
-                if (!ordersDbRef.current) {
-                    setAuthError("Firebase Firestore not initialized. Please refresh the page.");
-                    return false;
-                }
-
-                // Construct a dummy email for Firebase authentication
-                const firebaseEmail = `${username}@dlv-hub-temp.com`;
-
+            const [modal, setModal] = useState({ isOpen: false, message: '', onConfirm: null });
+            const [firebaseInstances, setFirebaseInstances] = useState(null);
+            const [users, setUsers] = useState(() => {
                 try {
-                    let credential;
-                    try {
-                        logDebug(`AuthContext.attemptLogin: Attempting signInWithEmailAndPassword for email: ${firebaseEmail}`);
-                        credential = await signInWithEmailAndPassword(ordersAuthRef.current, firebaseEmail, password);
-                        logDebug("AuthContext.attemptLogin: Signed in with username/password.");
-                    } catch (signInError) {
-                        if (signInError.code === 'auth/user-not-found' || signInError.code === 'auth/wrong-password') {
-                            // If user not found or wrong password, attempt to create account
-                            logDebug(`AuthContext.attemptLogin: User not found or wrong password for ${username}, attempting to create new account.`);
-                            credential = await createUserWithEmailAndPassword(ordersAuthRef.current, firebaseEmail, password);
-                            logDebug("AuthContext.attemptLogin: Account created with username/password.");
-                        } else {
-                            // Catch any other Firebase auth errors here and set the message
-                            console.error("AuthContext.attemptLogin: Firebase error:", signInError);
-                            setAuthError(`Login/Registration failed: ${signInError.message}. Make sure password is at least 6 characters.`);
-                            return false;
-                        }
+                    const savedUsers = localStorage.getItem('dlv_users');
+                    if (savedUsers) {
+                        return JSON.parse(savedUsers);
                     }
-
-                    const currentUser = credential.user;
-                    let newRole = 'orderer';
-                    let finalDisplayName = username; // Use username as display name
-
-                    // Check if user profile already exists in Firestore
-                    const userProfileRef = doc(ordersDbRef.current, `artifacts/${CANVAS_APP_ID}/users`, currentUser.uid);
-                    const userProfileSnap = await getDoc(userProfileRef);
-
-                    if (!userProfileSnap.exists()) {
-                        // If profile doesn't exist, create it with the selected name and role
-                        // Determine role based on typed username (for first login/registration)
-                        if (username.toLowerCase() === 'warehouse') {
-                            newRole = 'warehouse';
-                        } else if (username.toLowerCase() === 'admin') {
-                            newRole = 'admin';
-                        }
-
-                        await setDoc(userProfileRef, {
-                            displayName: finalDisplayName,
-                            email: currentUser.email || firebaseEmail, // Store Firebase's email or dummy email
-                            role: newRole,
-                            createdAt: new Date().toISOString()
-                        });
-                        logDebug("AuthContext.attemptLogin: Created new user profile in Firestore.");
-                    } else {
-                        // If profile exists, update local state with profile data (in case role was changed by admin)
-                        const profileData = userProfileSnap.data();
-                        newRole = profileData.role || 'orderer'; // Use role from Firestore
-                        finalDisplayName = profileData.displayName || finalDisplayName;
-                        logDebug("AuthContext.attemptLogin: Loaded existing user profile from Firestore.");
-                    }
-
-                    setUser({ displayName: finalDisplayName, uid: currentUser.uid });
-                    setRole(newRole);
-                    setUserId(currentUser.uid); // Ensure userId is the Firebase UID
-                    setAuthError(null); // Clear any errors on successful login
-                    logDebug(`AuthContext.attemptLogin: Final logged in as ${finalDisplayName} (${newRole}) with UID: ${currentUser.uid}`);
-                    return true; // Indicate success
+                    // Initial default users
+                    const defaultUsers = [
+                        { id: '1', username: 'Admin', pin: '1234', role: 'admin' },
+                        { id: '2', username: 'Warehouse', pin: '5678', role: 'warehouse' },
+                        { id: '3', username: 'John', pin: '1111', role: 'orderer' },
+                    ];
+                    localStorage.setItem('dlv_users', JSON.stringify(defaultUsers));
+                    return defaultUsers;
                 } catch (error) {
-                    // Catch any non-Firebase or unexpected errors during profile loading/saving
-                    console.error("AuthContext.attemptLogin: General login/profile error:", error);
-                    setAuthError(`An unexpected error occurred during login/registration: ${error.message}`);
-                    return false; // Indicate failure
+                    console.error("Error initializing users from localStorage:", error);
+                    return [];
                 }
-            };
+            });
 
+            // Initialize Firebase connections
             useEffect(() => {
-                const initializeAndAuth = async () => {
-                    logDebug("AuthProvider: Initializing Firebase for DLV Order Hub and attempting auth...");
-                    setAuthError(null); // Clear any previous auth errors at the start
-
+                const initializeFirebase = async () => {
                     try {
-                        const appConfig = CANVAS_FIREBASE_CONFIG || ordersFirebaseConfig;
-                        // Log the Firebase config being used for the orders project
-                        logDebug("AuthProvider: Orders Firebase Config being used:", appConfig);
-                        
-                        ordersAppRef.current = initializeApp(appConfig);
-                        ordersDbRef.current = getFirestore(ordersAppRef.current);
-                        ordersAuthRef.current = getAuth(ordersAppRef.current);
-                        logDebug("AuthProvider: Firebase app for dlvorders initialized.");
+                        // Initialize Primary App (dlvorders)
+                        const primaryApp = window.initializeApp(primaryFirebaseConfig, "primary");
+                        const primaryDb = window.getFirestore(primaryApp);
+                        const primaryAuth = window.getAuth(primaryApp);
+                        await window.signInAnonymously(primaryAuth);
 
-                        // Set up the onAuthStateChanged listener first and rely on it for final user state
-                        const unsubscribe = onAuthStateChanged(ordersAuthRef.current, async (currentUser) => {
-                            logDebug("onAuthStateChanged: Callback fired. currentUser:", currentUser?.uid);
-                            if (currentUser) {
-                                // If a Firebase user is logged in, fetch their profile (name and role)
-                                const userProfileRef = doc(ordersDbRef.current, `artifacts/${CANVAS_APP_ID}/users`, currentUser.uid);
-                                try {
-                                    const userProfileSnap = await getDoc(userProfileRef);
-                                    if (userProfileSnap.exists()) {
-                                        const profileData = userProfileSnap.data();
-                                        setUser({ displayName: profileData.displayName, uid: currentUser.uid });
-                                        setRole(profileData.role);
-                                        setUserId(currentUser.uid);
-                                        setAuthError(null);
-                                        logDebug("onAuthStateChanged: User profile loaded from Firestore.", profileData);
-                                    } else {
-                                        // User authenticated with Firebase, but no profile exists yet
-                                        setUser(currentUser);
-                                        setUserId(currentUser.uid);
-                                        setRole('orderer'); // Default role
-                                        logDebug("onAuthStateChanged: Firebase user, but no profile found in Firestore. Defaulting role to orderer.");
-                                    }
-                                } catch (profileError) {
-                                    console.error("onAuthStateChanged: Error fetching user profile:", profileError);
-                                    // This error is critical as it affects logged-in user state.
-                                    setAuthError(`Failed to load user profile: ${profileError.message}. You may need to re-login.`);
-                                    setUser(currentUser);
-                                    setUserId(currentUser.uid);
-                                }
-                            } else {
-                                // No Firebase user logged in
-                                setUser(null);
-                                setRole('orderer'); // Default role
-                                setUserId(crypto.randomUUID()); // Generate a random ID for unauthenticated actions
-                                logDebug("onAuthStateChanged: No Firebase user, setting anonymous/random user state.");
-                            }
-                            setLoading(false); // Auth state has been determined, stop loading
-                            logDebug("AuthProvider: Auth state determined by listener, loading set to false.");
-                        });
+                        // Initialize Secondary App (dlv-warehouse-tracker)
+                        const secondaryApp = window.initializeApp(secondaryFirebaseConfig, "secondary");
+                        const secondaryDb = window.getFirestore(secondaryApp);
 
-                        // Attempt initial sign-in: first with custom token, then fallback if needed.
-                        if (CANVAS_INITIAL_AUTH_TOKEN) {
-                            try {
-                                logDebug("AuthProvider: Attempting signInWithCustomToken...");
-                                await signInWithCustomToken(ordersAuthRef.current, CANVAS_INITIAL_AUTH_TOKEN);
-                                logDebug("AuthProvider: signInWithCustomToken attempt finished.");
-                            } catch (error) {
-                                console.warn("AuthProvider: signInWithCustomToken failed. Error:", error);
-                                // Fall through to check for saved credentials or anonymous sign-in
-                            }
-                        }
-
-                        // Check for saved credentials and attempt auto-login
-                        const savedCreds = getSavedCredentials();
-                        if (savedCreds && !ordersAuthRef.current.currentUser) {
-                            logDebug("AuthProvider: Found saved credentials, attempting auto-login...");
-                            const success = await attemptLogin(savedCreds.username, savedCreds.password);
-                            if (!success) {
-                                clearSavedCredentials(); // Clear if auto-login failed
-                                console.warn("AuthProvider: Auto-login with saved credentials failed, cleared.");
-                            }
-                        }
-
-                        // Ensure an anonymous session is established if no user is already logged in (e.g., if custom token or auto-login failed)
-                        if (!ordersAuthRef.current.currentUser) {
-                            try {
-                                logDebug("AuthProvider: No active Firebase user, attempting signInAnonymously as primary or fallback...");
-                                await signInAnonymously(ordersAuthRef.current);
-                                logDebug("AuthProvider: signInAnonymously attempt finished successfully.");
-                            } catch (error) {
-                                console.error("AuthProvider: signInAnonymously also failed:", error);
-                                setAuthError(`Firebase Authentication failed: ${error.message}. Please ensure Email/Password and Anonymous sign-in methods are enabled in your 'dlvorders' Firebase project's Authentication settings, and that the API Key in the code is correct.`);
-                                setLoading(false); // Critical: stop loading here if *all* auth attempts fail
-                            }
-                        }
-
-                        return () => unsubscribe(); // Cleanup the listener on component unmount
-                    } catch (initializationError) {
-                        // Catches errors during initializeApp itself (e.g., bad firebase config or network)
-                        console.error("AuthProvider: Critical error during Firebase app initialization:", initializationError);
-                        setAuthError(`Firebase initialization error: ${initializationError.message}. Double-check your Firebase config (API Key, Project ID) and network connection.`);
-                        setLoading(false); // Must stop loading if initialization fails
+                        setFirebaseInstances({ primaryDb, secondaryDb });
+                    } catch (error) {
+                        console.error("Firebase Initialization Error:", error);
+                        setModal({ isOpen: true, message: `Failed to connect to databases. Please check console for details. Error: ${error.message}` });
+                    } finally {
+                        setLoading(false);
                     }
                 };
 
-                initializeAndAuth();
-            }, []); // Empty dependency array means this runs once on mount
+                initializeFirebase();
+            }, []);
 
-            const login = async (username, password, rememberMe) => {
-                const success = await attemptLogin(username, password);
-                if (success) {
-                    saveCredentials(username, password, rememberMe);
-                } else {
-                    // Do not clear authError here, as it's meant to be displayed by LoginScreen
+            const login = (username, pin) => {
+                const foundUser = users.find(u => u.username.toLowerCase() === username.toLowerCase() && u.pin === pin);
+                if (foundUser) {
+                    setUser(foundUser);
+                    sessionStorage.setItem('dlv_user', JSON.stringify(foundUser));
+                    return true;
                 }
+                setModal({ isOpen: true, message: 'Invalid username or PIN.' });
+                return false;
             };
 
-            const logout = async () => {
-                logDebug("AuthContext.logout: Attempting logout.");
+            const logout = () => {
+                setUser(null);
+                sessionStorage.removeItem('dlv_user');
+                sessionStorage.removeItem('dlv_cart'); // Clear cart on logout
+            };
+
+            const updateUserList = (newUsers) => {
+                setUsers(newUsers);
+                localStorage.setItem('dlv_users', JSON.stringify(newUsers));
+            };
+            
+            // Check for persisted session on load
+            useEffect(() => {
                 try {
-                    await signOut(ordersAuthRef.current); // Sign out from Firebase Auth
-                    clearSavedCredentials(); // Clear saved credentials on logout
-                    // After Firebase signOut, onAuthStateChanged listener will fire with null user,
-                    // which will clear local user state and set a new random userId.
-                    logDebug("AuthContext.logout: Signed out from Firebase Auth and cleared saved credentials.");
+                    const savedUser = sessionStorage.getItem('dlv_user');
+                    if (savedUser) {
+                        setUser(JSON.parse(savedUser));
+                    }
                 } catch (error) {
-                    console.error("AuthContext.logout: Error signing out:", error);
-                    setAuthError(`Logout failed: ${error.message}`);
+                    console.error("Error reading user session:", error);
                 }
+            }, []);
+
+
+            const showModal = (message, onConfirm = null) => {
+                setModal({ isOpen: true, message, onConfirm });
             };
 
-            return (
-                <AuthContext.Provider value={{
-                    user,
-                    role,
-                    userId,
-                    login,
-                    logout,
-                    loading,
-                    authError,
-                    setAuthError, // Expose setAuthError so LoginScreen can clear it
-                    ordersDb: ordersDbRef.current,
-                    ordersAuth: ordersAuthRef.current,
-                    CANVAS_APP_ID
-                }}>
-                    {children}
-                </AuthContext.Provider>
-            );
+            const closeModal = () => {
+                setModal({ isOpen: false, message: '', onConfirm: null });
+            };
+
+            const value = {
+                user,
+                users,
+                login,
+                logout,
+                updateUserList,
+                loading,
+                firebaseInstances,
+                modal,
+                showModal,
+                closeModal
+            };
+
+            return <AppContext.Provider value={value}>{children}</AppContext.Provider>;
         };
 
-        {/* --- Custom Modal for User Messages (replaces alert/confirm) --- */}
-        const UserModal = ({ message, type = 'info', onConfirm, onCancel, showCancel = false, onClose }) => {
-            if (!message) return null;
+        // --- Custom Hooks ---
+        const useAppContext = () => useContext(AppContext);
 
-            const bgColor = {
-                'info': 'bg-blue-100 border-blue-400 text-blue-700',
-                'success': 'bg-green-100 border-green-400 text-green-700',
-                'error': 'bg-red-100 border-red-400 text-red-700',
-                'confirm': 'bg-yellow-100 border-yellow-400 text-yellow-700'
-            }[type];
+        // --- UI Components ---
 
-            const buttonColor = {
-                'info': 'bg-blue-500 hover:bg-blue-600',
-                'success': 'bg-green-500 hover:bg-green-600',
-                'error': 'bg-red-500 hover:bg-red-600',
-                'confirm': 'bg-yellow-500 hover:bg-yellow-600'
-            }[type];
+        const Modal = () => {
+            const { modal, closeModal } = useAppContext();
+
+            if (!modal.isOpen) return null;
+
+            const handleConfirm = () => {
+                if (modal.onConfirm) {
+                    modal.onConfirm();
+                }
+                closeModal();
+            };
 
             return (
-                <div className="fixed inset-0 bg-gray-600 bg-opacity-75 flex items-center justify-center p-4 z-50">
-                    <div className={`relative p-6 rounded-lg shadow-xl max-w-sm w-full border ${bgColor} text-center`}>
-                        <p className="mb-4 text-lg font-medium">{message}</p>
+                <div className="modal-overlay">
+                    <div className="modal-content text-center">
+                        <p className="mb-6 text-lg">{modal.message}</p>
                         <div className="flex justify-center space-x-4">
-                            {(type === 'confirm' || onConfirm) && (
+                            {modal.onConfirm && (
                                 <button
-                                    onClick={() => { onConfirm && onConfirm(); onClose(); }}
-                                    className={`px-4 py-2 rounded-md text-white font-semibold transition-colors duration-200 ${buttonColor}`}
-                                >
-                                    OK
-                                </button>
-                            )}
-                            {showCancel && (
-                                <button
-                                    onClick={() => { onCancel && onCancel(); onClose(); }}
-                                    className="px-4 py-2 rounded-md bg-gray-300 hover:bg-gray-400 text-gray-800 font-semibold transition-colors duration-200"
+                                    onClick={closeModal}
+                                    className="px-6 py-2 rounded-md bg-gray-200 text-gray-800 hover:bg-gray-300 transition-colors"
                                 >
                                     Cancel
                                 </button>
                             )}
-                            {(!onConfirm && !showCancel) && ( // For simple info/success/error modals
-                                <button
-                                    onClick={onClose}
-                                    className={`px-4 py-2 rounded-md text-white font-semibold transition-colors duration-200 ${buttonColor}`}
-                                >
-                                    Close
-                                </button>
-                            )}
+                            <button
+                                onClick={handleConfirm}
+                                className="px-6 py-2 rounded-md bg-blue-600 text-white hover:bg-blue-700 transition-colors"
+                            >
+                                OK
+                            </button>
                         </div>
                     </div>
                 </div>
             );
         };
 
-        {/* --- Error Boundary Component --- */}
-        class ErrorBoundary extends React.Component {
-            constructor(props) {
-                super(props);
-                this.state = { hasError: false, error: null, errorInfo: null };
-            }
+        const LoadingSpinner = ({ message = "Loading..." }) => (
+            <div className="flex flex-col items-center justify-center h-screen bg-gray-100">
+                <div className="w-16 h-16 border-4 border-blue-500 border-t-transparent rounded-full animate-spin"></div>
+                <p className="mt-4 text-lg text-gray-600">{message}</p>
+            </div>
+        );
 
-            static getDerivedStateFromError(error) {
-                return { hasError: true, error };
-            }
-
-            componentDidCatch(error, errorInfo) {
-                console.error("ErrorBoundary caught an error:", error, errorInfo);
-                this.setState({ errorInfo });
-            }
-
-            render() {
-                if (this.state.hasError) {
-                    return (
-                        <div className="flex flex-col items-center justify-center min-h-screen bg-red-50 text-red-800 p-6 rounded-lg shadow-md m-4">
-                            <h1 className="text-3xl font-bold mb-4">Oops! Something went wrong.</h1>
-                            <p className="text-lg text-center mb-4">We're sorry for the inconvenience. Please try refreshing the page.</p>
-                            {DEBUG_MODE && this.state.error && (
-                                <div className="bg-red-100 p-4 rounded-md text-sm text-left w-full max-w-2xl overflow-auto">
-                                    <h2 className="font-semibold mb-2">Error Details:</h2>
-                                    <pre className="whitespace-pre-wrap break-words">{this.state.error.toString()}</pre>
-                                    <h2 className="font-semibold mt-4 mb-2">Component Stack:</h2>
-                                    <pre className="whitespace-pre-wrap break-words">{this.state.errorInfo?.componentStack}</pre>
-                                </div>
-                            )}
-                        </div>
-                    );
-                }
-                return this.props.children;
-            }
-        }
-
-        {/* --- Main App Component --- */}
-        const App = () => {
-            // Destructure login from AuthContext here, once, in the component body
-            const { user, role, userId, logout, loading, authError, ordersDb, ordersAuth, CANVAS_APP_ID, login } = useContext(AuthContext);
-            const [currentPage, setCurrentPage] = useState('inventory'); // 'inventory', 'cart', 'orderHistory', 'orderManagement'
-            const [modalMessage, setModalMessage] = useState('');
-            const [modalType, setModalType] = useState('info');
-            const [modalConfirmCallback, setModalConfirmCallback] = useState(null);
-            const [modalCancelCallback, setModalCancelCallback] = useState(null);
-            const [showModalCancel, setShowModalCancel] = useState(false);
-
-            // Existing Firebase (warehouse-tracker) instances
-            const warehouseAppRef = useRef(null);
-            const warehouseDbRef = useRef(null);
-
-            useEffect(() => {
-                logDebug("App: Initializing dlv-warehouse-tracker Firebase...");
-                try {
-                    warehouseAppRef.current = initializeApp(EXISTING_FIREBASE_CONFIG, "warehouseApp"); // Give it a unique name
-                    warehouseDbRef.current = getFirestore(warehouseAppRef.current);
-                    logDebug("App: Firebase app for dlv-warehouse-tracker initialized.");
-                } catch (error) {
-                    console.error("App: Error initializing warehouse-tracker Firebase:", error);
-                    showUserModal(`Failed to connect to inventory database: ${error.message}`, "error");
-                }
-            }, []);
-
-            const showUserModal = (message, type = 'info', onConfirm = null, onCancel = null, showCancel = false) => {
-                setModalMessage(message);
-                setModalType(type);
-                setModalConfirmCallback(() => onConfirm); // Use function to prevent direct call
-                setModalCancelCallback(() => onCancel);
-                setShowModalCancel(showCancel);
-            };
-
-            const closeUserModal = () => {
-                setModalMessage('');
-                setModalType('info');
-                setModalConfirmCallback(null);
-                setModalCancelCallback(null);
-                setShowModalCancel(false);
-            };
-
-            if (loading) {
-                logDebug("App: Displaying loading screen.");
-                return (
-                    <div className="flex items-center justify-center min-h-screen bg-gray-100">
-                        <div className="animate-spin rounded-full h-16 w-16 border-t-4 border-b-4 border-blue-500"></div>
-                        <p className="ml-4 text-xl text-gray-700">Loading application...</p>
-                    </div>
-                );
-            }
-
-            // Only display critical app-level authError if user is NOT authenticated
-            // This prevents the full-screen error from hijacking the login flow
-            // when it's just a login attempt error. LoginScreen handles its own errors now.
-            if (!user && authError && !loading) {
-                 logDebug("App: Displaying critical authentication error screen. Error:", authError);
-                return (
-                    <div className="flex flex-col items-center justify-center min-h-screen bg-red-50 text-red-800 p-6 rounded-lg shadow-md m-4">
-                        <h1 className="text-3xl font-bold mb-4">Authentication Error!</h1>
-                        <p className="text-lg text-center mb-4">{authError}</p>
-                        <p className="text-md">This is a critical error preventing the app from starting properly.</p>
-                        <p className="text-md">Please ensure Firebase Email/Password and Anonymous methods are enabled in your project settings.</p>
-                    </div>
-                );
-            }
-
-            // Render login screen if user is not logged in (user.displayName is used for simple login)
-            if (!user || !user.displayName) {
-                logDebug("App: Displaying LoginScreen. User state:", user);
-                // Pass the 'login' function directly from AuthContext to LoginScreen
-                return <LoginScreen onLogin={login} showUserModal={showUserModal} authError={authError} setAuthError={useContext(AuthContext).setAuthError} />;
-            }
-
-            const headerNavItems = [
-                { id: 'inventory', label: 'Inventory', roles: ['orderer', 'warehouse', 'admin'] },
-                { id: 'cart', label: 'My Cart', roles: ['orderer'] },
-                { id: 'orderHistory', label: 'My Orders', roles: ['orderer'] },
-                { id: 'orderManagement', label: 'Order Management', roles: ['warehouse', 'admin'] },
-            ];
+        const Header = () => {
+            const { user, logout } = useAppContext();
 
             return (
-                <div className="min-h-screen flex flex-col">
-                    {/* Header */}
-                    <header className="bg-gray-800 text-white p-4 shadow-md">
-                        <div className="container mx-auto flex flex-col sm:flex-row justify-between items-center">
-                            <h1 className="text-3xl font-bold mb-2 sm:mb-0">DLV Order Hub</h1>
-                            <nav className="flex flex-wrap justify-center sm:space-x-4 mb-2 sm:mb-0">
-                                {headerNavItems.map(item =>
-                                    item.roles.includes(role) && (
-                                        <button
-                                            key={item.id}
-                                            onClick={() => setCurrentPage(item.id)}
-                                            className={`px-4 py-2 rounded-md transition-colors duration-200 m-1
-                                                         ${currentPage === item.id ? 'bg-blue-600' : 'hover:bg-gray-700'}`}
-                                        >
-                                            {item.label}
-                                        </button>
-                                    )
-                                )}
-                            </nav>
-                            <div className="flex items-center space-x-4">
-                                <span className="text-lg font-medium">
-                                    Logged in as: {user.displayName} ({role})
-                                </span>
-                                {userId && <span className="text-sm">User ID: {userId}</span>}
-                                <button
-                                    onClick={logout}
-                                    className="px-4 py-2 bg-red-600 rounded-md hover:bg-red-700 transition-colors duration-200"
-                                >
-                                    Logout
-                                </button>
-                            </div>
+                <header className="bg-white shadow-md p-4 flex justify-between items-center">
+                    <h1 className="text-2xl font-bold text-gray-800">DLV Order Hub</h1>
+                    {user && (
+                        <div className="flex items-center space-x-4">
+                            <span className="text-gray-600">Welcome, <span className="font-semibold">{user.username}</span> ({user.role})</span>
+                            <button onClick={logout} className="px-4 py-2 bg-red-500 text-white rounded-md hover:bg-red-600 transition-colors">
+                                Logout
+                            </button>
                         </div>
-                    </header>
+                    )}
+                </header>
+            );
+        };
+        
+        const Nav = ({ setCurrentPage }) => {
+            const { user } = useAppContext();
 
-                    {/* Main Content */}
-                    <main className="flex-grow container mx-auto p-4 bg-white rounded-lg shadow-lg my-4">
-                        {currentPage === 'inventory' && (
-                            <InventoryPage
-                                warehouseDb={warehouseDbRef.current}
-                                ordersDb={ordersDb}
-                                showUserModal={showUserModal}
-                                role={role}
-                                userId={userId}
-                            />
-                        )}
-                        {currentPage === 'cart' && role === 'orderer' && (
-                            <CartPage
-                                ordersDb={ordersDb}
-                                showUserModal={showUserModal}
-                                userId={userId}
-                                userDisplayName={user.displayName}
-                                warehouseDb={warehouseDbRef.current}
-                            />
-                        )}
-                        {currentPage === 'orderHistory' && role === 'orderer' && (
-                            <OrderHistoryPage
-                                ordersDb={ordersDb}
-                                showUserModal={showUserModal}
-                                userId={userId}
-                            />
-                        )}
-                        {currentPage === 'orderManagement' && (role === 'warehouse' || role === 'admin') && (
-                            <OrderManagementPage
-                                ordersDb={ordersDb}
-                                showUserModal={showUserModal}
-                                userId={userId}
-                            />
-                        )}
-                    </main>
+            if (!user) return null;
 
-                    {/* Footer */}
-                    <footer className="bg-gray-800 text-white p-4 text-center mt-auto">
-                        <p>&copy; {new Date().getFullYear()} DLV Order Hub. All rights reserved.</p>
-                    </footer>
-
-                    {/* User Modal */}
-                    <UserModal
-                        message={modalMessage}
-                        type={modalType}
-                        onConfirm={modalConfirmCallback}
-                        onCancel={modalCancelCallback}
-                        showCancel={showModalCancel}
-                        onClose={closeUserModal}
-                    />
-                </div>
+            return (
+                <nav className="bg-gray-800 text-white p-4">
+                    <ul className="flex space-x-6">
+                        {(user.role === 'orderer' || user.role === 'admin') && (
+                            <>
+                                <li><button onClick={() => setCurrentPage('inventory')} className="hover:text-blue-300">Inventory</button></li>
+                                <li><button onClick={() => setCurrentPage('cart')} className="hover:text-blue-300">Cart</button></li>
+                                <li><button onClick={() => setCurrentPage('order_history')} className="hover:text-blue-300">Order History</button></li>
+                            </>
+                        )}
+                        {(user.role === 'warehouse' || user.role === 'admin') && (
+                            <li><button onClick={() => setCurrentPage('order_management')} className="hover:text-blue-300">Order Management</button></li>
+                        )}
+                        {user.role === 'admin' && (
+                             <li><button onClick={() => setCurrentPage('user_management')} className="hover:text-blue-300">User Management</button></li>
+                        )}
+                    </ul>
+                </nav>
             );
         };
 
-        {/* Login Screen Component */}
-        const LoginScreen = ({ onLogin, showUserModal, authError, setAuthError }) => {
+        // --- Page Components ---
+
+        const LoginPage = () => {
             const [username, setUsername] = useState('');
-            const [password, setPassword] = useState('');
-            const [isRegisterMode, setIsRegisterMode] = useState(false);
-            const [rememberMe, setRememberMe] = useState(false);
+            const [pin, setPin] = useState('');
+            const { login, showModal } = useAppContext();
 
-            // Auto-fill from localStorage on mount
-            useEffect(() => {
-                const savedCreds = getSavedCredentials();
-                if (savedCreds) {
-                    setUsername(savedCreds.username);
-                    setPassword(savedCreds.password);
-                    setRememberMe(savedCreds.rememberMe);
-                }
-            }, []);
-
-            // Watch for authentication errors from AuthContext and display them as a modal
-            useEffect(() => {
-                if (authError) {
-                    showUserModal(authError, 'error', () => {
-                        setAuthError(null); // Clear error when modal is closed
-                    });
-                }
-            }, [authError, showUserModal, setAuthError]);
-
-
-            const handleSubmit = async (e) => {
+            const handleLogin = (e) => {
                 e.preventDefault();
-                setAuthError(null); // Clear any existing error message before new attempt
-
-                if (!username || !password) {
-                    showUserModal("Please enter both username and password.", "error");
+                if (pin.length !== 4 || !/^\d{4}$/.test(pin)) {
+                    showModal("PIN must be 4 digits.");
                     return;
                 }
-
-                // onLogin already handles Firebase errors and sets authError in AuthContext
-                await onLogin(username, password, rememberMe);
+                login(username, pin);
             };
 
             return (
-                <div className="flex items-center justify-center min-h-screen bg-gradient-to-r from-blue-500 to-indigo-600 p-4">
-                    <div className="bg-white p-8 rounded-xl shadow-2xl w-full max-w-md text-center transform hover:scale-105 transition-transform duration-300">
-                        <h2 className="text-4xl font-extrabold text-gray-900 mb-6">Welcome to DLV Order Hub</h2>
-                        <p className="text-gray-600 mb-8 text-lg">
-                            {isRegisterMode ? "Register your account" : "Log in to continue"}
-                        </p>
-                        <form onSubmit={handleSubmit} className="space-y-6">
-                            <div>
-                                <label htmlFor="username" className="sr-only">Username</label>
+                <div className="flex items-center justify-center min-h-screen bg-gray-100">
+                    <div className="p-8 bg-white rounded-lg shadow-xl w-full max-w-md">
+                        <h2 className="text-3xl font-bold mb-6 text-center text-gray-800">DLV Order Hub Login</h2>
+                        <form onSubmit={handleLogin}>
+                            <div className="mb-4">
+                                <label className="block text-gray-700 text-sm font-bold mb-2" htmlFor="username">
+                                    Username
+                                </label>
                                 <input
-                                    type="text"
                                     id="username"
+                                    type="text"
                                     value={username}
                                     onChange={(e) => setUsername(e.target.value)}
-                                    placeholder="Enter your username"
-                                    className="w-full px-5 py-3 border border-gray-300 rounded-lg shadow-sm focus:ring-blue-500 focus:border-blue-500 text-lg placeholder-gray-500"
+                                    className="shadow appearance-none border rounded w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:shadow-outline"
                                     required
                                 />
                             </div>
-                            <div>
-                                <label htmlFor="password" className="sr-only">Password</label>
+                            <div className="mb-6">
+                                <label className="block text-gray-700 text-sm font-bold mb-2" htmlFor="pin">
+                                    4-Digit PIN
+                                </label>
                                 <input
+                                    id="pin"
                                     type="password"
-                                    id="password"
-                                    value={password}
-                                    onChange={(e) => setPassword(e.target.value)}
-                                    placeholder="Enter your password"
-                                    className="w-full px-5 py-3 border border-gray-300 rounded-lg shadow-sm focus:ring-blue-500 focus:border-blue-500 text-lg placeholder-gray-500"
+                                    maxLength="4"
+                                    value={pin}
+                                    onChange={(e) => setPin(e.target.value.replace(/\D/,''))}
+                                    className="shadow appearance-none border rounded w-full py-2 px-3 text-gray-700 mb-3 leading-tight focus:outline-none focus:shadow-outline"
                                     required
                                 />
                             </div>
-                            <div className="flex items-center justify-between">
-                                <div className="flex items-center">
-                                    <input
-                                        id="remember-me"
-                                        name="remember-me"
-                                        type="checkbox"
-                                        checked={rememberMe}
-                                        onChange={(e) => setRememberMe(e.target.checked)}
-                                        className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
-                                    />
-                                    <label htmlFor="remember-me" className="ml-2 block text-gray-900 text-base">
-                                        Remember me
-                                    </label>
-                                </div>
+                            <div className="flex items-center justify-center">
+                                <button
+                                    type="submit"
+                                    className="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-lg focus:outline-none focus:shadow-outline w-full transition-colors"
+                                >
+                                    Sign In
+                                </button>
                             </div>
-                            <button
-                                type="submit"
-                                className="w-full bg-blue-600 text-white py-3 px-6 rounded-lg text-xl font-semibold hover:bg-blue-700 transition-colors duration-300 transform hover:-translate-y-1 shadow-lg"
-                            >
-                                {isRegisterMode ? "Register Account" : "Log In"}
-                            </button>
                         </form>
-                        <p className="mt-6 text-gray-600 text-md">
-                            {isRegisterMode ? "Already have an account?" : "Don't have an account?"}{' '}
-                            <button
-                                type="button"
-                                onClick={() => {
-                                    setIsRegisterMode(!isRegisterMode);
-                                    setAuthError(null); // Clear error if switching modes
-                                }}
-                                className="text-blue-600 hover:text-blue-800 font-semibold transition-colors duration-200"
-                            >
-                                {isRegisterMode ? "Log In here" : "Register here"}
-                            </button>
-                        </p>
-                        {isRegisterMode && (
-                            <p className="mt-2 text-gray-500 text-sm">
-                                For roles, type "warehouse" or "admin" as your username during registration.
-                            </p>
-                        )}
                     </div>
                 </div>
             );
         };
 
-        {/* Inventory Page Component */}
-        const InventoryPage = ({ warehouseDb, ordersDb, showUserModal, role, userId }) => {
-            const [inventory, setInventory] = useState([]);
-            const [loading, setLoading] = useState(true);
-            const [error, setError] = useState(null);
-            const [isAddItemModalOpen, setIsAddItemModalOpen] = useState(false);
-            const [selectedItem, setSelectedItem] = useState(null);
-            const [quantity, setQuantity] = useState(1);
-            const [cart, setCart] = useState(JSON.parse(sessionStorage.getItem('dlv_cart')) || []);
-            const [isEditModalOpen, setIsEditModalOpen] = useState(false);
-            const [editItemData, setEditItemData] = useState(null);
-            const [searchTerm, setSearchTerm] = useState('');
+        const UserManagementPage = () => {
+            const { users, updateUserList, showModal } = useAppContext();
+            const [editingUser, setEditingUser] = useState(null);
+            const [newUser, setNewUser] = useState({ username: '', pin: '', role: 'orderer' });
 
-            // Fetch inventory data from the EXISTING_FIREBASE_CONFIG (dlv-warehouse-tracker)
-            useEffect(() => {
-                logDebug("InventoryPage: Fetching inventory data...");
-                if (!warehouseDb) {
-                    showUserModal("Inventory database not initialized.", "error");
-                    setLoading(false);
+            const handleAddUser = (e) => {
+                e.preventDefault();
+                if (!newUser.username || !newUser.pin || newUser.pin.length !== 4) {
+                    showModal("Please provide a username and a 4-digit PIN.");
                     return;
                 }
+                if (users.some(u => u.username.toLowerCase() === newUser.username.toLowerCase())) {
+                    showModal("A user with this username already exists.");
+                    return;
+                }
+                const newId = users.length > 0 ? (Math.max(...users.map(u => parseInt(u.id))) + 1).toString() : '1';
+                updateUserList([...users, { ...newUser, id: newId }]);
+                setNewUser({ username: '', pin: '', role: 'orderer' });
+                showModal("User added successfully!");
+            };
 
-                const inventoryColRef = collection(warehouseDb, `artifacts/${WAREHOUSE_TRACKER_DATA_APP_ID}/public/data/inventory`);
-                const q = query(inventoryColRef);
+            const handleUpdateUser = () => {
+                if (!editingUser.pin || editingUser.pin.length !== 4) {
+                    showModal("PIN must be 4 digits.");
+                    return;
+                }
+                updateUserList(users.map(u => u.id === editingUser.id ? editingUser : u));
+                setEditingUser(null);
+                showModal("User updated successfully!");
+            };
 
-                const unsubscribe = onSnapshot(q, (snapshot) => {
-                    logDebug("InventoryPage: Inventory snapshot received.");
-                    const items = snapshot.docs.map(doc => ({
-                        id: doc.id,
-                        ...doc.data()
-                    }));
-                    setInventory(items);
-                    setLoading(false);
-                    logDebug("InventoryPage: Inventory data loaded, loading set to false.");
-                }, (err) => {
-                    console.error("InventoryPage: Error fetching inventory:", err);
-                    setError(err);
-                    showUserModal(`Failed to load inventory: ${err.message}`, "error");
-                    setLoading(false);
+            const handleDeleteUser = (userId) => {
+                showModal("Are you sure you want to delete this user?", () => {
+                    updateUserList(users.filter(u => u.id !== userId));
                 });
+            };
 
-                return () => unsubscribe();
-            }, [warehouseDb]);
+            return (
+                <div className="p-8">
+                    <h2 className="text-3xl font-bold mb-6">User Management</h2>
+                    
+                    {/* Add User Form */}
+                    <div className="bg-white p-6 rounded-lg shadow-md mb-8">
+                        <h3 className="text-xl font-semibold mb-4">Add New User</h3>
+                        <form onSubmit={handleAddUser} className="grid grid-cols-1 md:grid-cols-4 gap-4 items-end">
+                            <input type="text" placeholder="Username" value={newUser.username} onChange={e => setNewUser({...newUser, username: e.target.value})} className="p-2 border rounded" />
+                            <input type="text" placeholder="4-Digit PIN" value={newUser.pin} maxLength="4" onChange={e => setNewUser({...newUser, pin: e.target.value.replace(/\D/,'')})} className="p-2 border rounded" />
+                            <select value={newUser.role} onChange={e => setNewUser({...newUser, role: e.target.value})} className="p-2 border rounded bg-white">
+                                <option value="orderer">Orderer</option>
+                                <option value="warehouse">Warehouse</option>
+                                <option value="admin">Admin</option>
+                            </select>
+                            <button type="submit" className="bg-green-500 text-white p-2 rounded hover:bg-green-600">Add User</button>
+                        </form>
+                    </div>
 
-            // Sync cart with sessionStorage on updates
+                    {/* User List */}
+                    <div className="bg-white p-6 rounded-lg shadow-md">
+                        <h3 className="text-xl font-semibold mb-4">Existing Users</h3>
+                        <div className="space-y-4">
+                            {users.map(user => (
+                                <div key={user.id} className="p-4 border rounded-lg flex flex-col md:flex-row justify-between items-center">
+                                    {editingUser && editingUser.id === user.id ? (
+                                        <>
+                                            <span className="font-semibold text-lg mb-2 md:mb-0">{user.username}</span>
+                                            <input type="text" value={editingUser.pin} maxLength="4" onChange={e => setEditingUser({...editingUser, pin: e.target.value.replace(/\D/,'')})} className="p-2 border rounded w-24 text-center" />
+                                            <select value={editingUser.role} onChange={e => setEditingUser({...editingUser, role: e.target.value})} className="p-2 border rounded bg-white">
+                                                <option value="orderer">Orderer</option>
+                                                <option value="warehouse">Warehouse</option>
+                                                <option value="admin">Admin</option>
+                                            </select>
+                                            <div className="flex space-x-2 mt-2 md:mt-0">
+                                                <button onClick={handleUpdateUser} className="bg-blue-500 text-white px-3 py-1 rounded hover:bg-blue-600">Save</button>
+                                                <button onClick={() => setEditingUser(null)} className="bg-gray-500 text-white px-3 py-1 rounded hover:bg-gray-600">Cancel</button>
+                                            </div>
+                                        </>
+                                    ) : (
+                                        <>
+                                            <div>
+                                                <span className="font-semibold text-lg">{user.username}</span>
+                                                <span className="text-gray-600 ml-4">Role: {user.role}</span>
+                                            </div>
+                                            <div className="flex space-x-2 mt-2 md:mt-0">
+                                                <button onClick={() => setEditingUser({...user})} className="bg-yellow-500 text-white px-3 py-1 rounded hover:bg-yellow-600">Edit</button>
+                                                <button onClick={() => handleDeleteUser(user.id)} className="bg-red-500 text-white px-3 py-1 rounded hover:bg-red-600">Delete</button>
+                                            </div>
+                                        </>
+                                    )}
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+                </div>
+            );
+        };
+        
+        const InventoryPage = () => {
+            const { user, firebaseInstances, showModal } = useAppContext();
+            const [inventory, setInventory] = useState([]);
+            const [loading, setLoading] = useState(true);
+            const [searchTerm, setSearchTerm] = useState("");
+            const [customImages, setCustomImages] = useState({});
+            const [cart, setCart] = useState(() => {
+                try {
+                    const savedCart = sessionStorage.getItem('dlv_cart');
+                    return savedCart ? JSON.parse(savedCart) : {};
+                } catch {
+                    return {};
+                }
+            });
+
+            // Fetch data
+            useEffect(() => {
+                if (!firebaseInstances) return;
+                const fetchData = async () => {
+                    setLoading(true);
+                    try {
+                        // Fetch master inventory from secondary DB
+                        const inventoryCol = window.collection(firebaseInstances.secondaryDb, '/artifacts/default-app-id/public/data/inventory');
+                        const inventorySnapshot = await window.getDocs(inventoryCol);
+                        const inventoryList = inventorySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+                        setInventory(inventoryList);
+                        
+                        // Fetch custom images from primary DB
+                        const imagesCol = window.collection(firebaseInstances.primaryDb, '/public/data/inventory_overrides');
+                        const imagesSnapshot = await window.getDocs(imagesCol);
+                        const imageMap = {};
+                        imagesSnapshot.forEach(doc => {
+                            imageMap[doc.id] = doc.data().imageUrl;
+                        });
+                        setCustomImages(imageMap);
+                    } catch (error) {
+                        console.error("Error fetching inventory:", error);
+                        showModal("Failed to load inventory data. Check your secondary DB's security rules.");
+                    } finally {
+                        setLoading(false);
+                    }
+                };
+                fetchData();
+            }, [firebaseInstances]);
+
+            // Persist cart to session storage
             useEffect(() => {
                 sessionStorage.setItem('dlv_cart', JSON.stringify(cart));
             }, [cart]);
 
-            const handleAddItemClick = (item) => {
-                setSelectedItem(item);
-                setQuantity(1); // Reset quantity
-                setIsAddItemModalOpen(true);
+            const handleAddToCart = (item, quantity) => {
+                if (quantity <= 0) return;
+                setCart(prevCart => {
+                    const existingItem = prevCart[item.id];
+                    return {
+                        ...prevCart,
+                        [item.id]: {
+                            ...item,
+                            quantity: (existingItem ? existingItem.quantity : 0) + quantity
+                        }
+                    };
+                });
+                showModal(`${quantity} x ${item.name} added to cart.`);
             };
 
-            const handleAddToCart = () => {
-                if (!selectedItem || quantity <= 0) {
-                    showUserModal("Please select a valid quantity.", "error");
-                    return;
-                }
-
-                const existingItemIndex = cart.findIndex(item => item.id === selectedItem.id);
-                if (existingItemIndex > -1) {
-                    const newCart = [...cart];
-                    newCart[existingItemIndex].quantity += quantity;
-                    setCart(newCart);
-                } else {
-                    setCart([...cart, { ...selectedItem, quantity }]);
-                }
-                showUserModal(`${quantity}x ${selectedItem.name} added to cart!`, "success");
-                setIsAddItemModalOpen(false);
-            };
-
-            const handleEditClick = (item) => {
-                setEditItemData(item);
-                setIsEditModalOpen(true);
-            };
-
-            const handleUpdateInventory = async (itemId, updatedData) => {
-                logDebug("InventoryPage: Attempting to update inventory item:", itemId, updatedData);
-                if (!ordersDb) {
-                    showUserModal("Orders database not initialized for inventory updates.", "error");
-                    return;
-                }
-                if (role !== 'admin') {
-                    showUserModal("You do not have permission to edit inventory.", "error");
-                    return;
-                }
-
-                setLoading(true);
-                try {
-                    const docRef = doc(warehouseDb, `artifacts/${WAREHOUSE_TRACKER_DATA_APP_ID}/public/data/inventory`, itemId);
-                    await updateDoc(docRef, updatedData);
-                    showUserModal("Inventory item updated successfully!", "success");
-                    setIsEditModalOpen(false);
-                    logDebug("InventoryPage: Inventory item updated successfully.");
-                } catch (err) {
-                    console.error("InventoryPage: Error updating inventory:", err);
-                    showUserModal(`Failed to update inventory: ${err.message}`, "error");
-                } finally {
-                    setLoading(false);
+            const handleAddPicture = async (itemId) => {
+                const imageUrl = prompt("Enter the new image URL:");
+                if (imageUrl) {
+                    try {
+                        const docRef = window.doc(firebaseInstances.primaryDb, `/public/data/inventory_overrides/${itemId}`);
+                        await window.setDoc(docRef, { imageUrl });
+                        setCustomImages(prev => ({...prev, [itemId]: imageUrl}));
+                        showModal("Custom image updated successfully!");
+                    } catch (error) {
+                        console.error("Error updating image URL:", error);
+                        showModal("Failed to update image URL. Check your primary DB's security rules.");
+                    }
                 }
             };
-
-            const filteredInventory = inventory.filter(item =>
-                item.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+            
+            const filteredInventory = inventory.filter(item => 
+                (item.name && item.name.toLowerCase().includes(searchTerm.toLowerCase())) ||
                 (item.description && item.description.toLowerCase().includes(searchTerm.toLowerCase()))
             );
 
-            if (loading) {
-                return <div className="text-center py-8">Loading inventory...</div>;
-            }
-
-            if (error) {
-                return <div className="text-center py-8 text-red-500">Error: {error.message}</div>;
-            }
+            if (loading) return <LoadingSpinner message="Loading Inventory..." />;
 
             return (
-                <div className="p-4">
-                    <h2 className="text-3xl font-bold mb-6 text-gray-800">Inventory</h2>
-
-                    <div className="mb-6 flex flex-col sm:flex-row justify-between items-center">
-                        <input
-                            type="text"
-                            placeholder="Search inventory..."
-                            value={searchTerm}
-                            onChange={(e) => setSearchTerm(e.target.value)}
-                            className="w-full sm:w-1/3 p-3 border border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 mb-4 sm:mb-0"
-                        />
-                        {role === 'orderer' && <MiniCartPreview cart={cart} />}
-                    </div>
-
-                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
+                <div className="p-8">
+                    <h2 className="text-3xl font-bold mb-6">Inventory</h2>
+                    <input 
+                        type="text"
+                        placeholder="Search inventory..."
+                        className="w-full p-3 mb-6 border rounded-lg shadow-sm"
+                        value={searchTerm}
+                        onChange={e => setSearchTerm(e.target.value)}
+                    />
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
                         {filteredInventory.map(item => (
-                            <div key={item.id} className="bg-white border border-gray-200 rounded-lg shadow-md hover:shadow-lg transition-shadow duration-300 p-4 flex flex-col">
-                                <img
-                                    src={item.imageUrl || `https://placehold.co/150x150/e0e0e0/000000?text=No+Image`}
-                                    alt={item.name}
-                                    className="w-full h-40 object-contain rounded-md mb-4 bg-gray-100"
-                                    onError={(e) => { e.target.onerror = null; e.target.src = `https://placehold.co/150x150/e0e0e0/000000?text=Image+Error`; }}
+                            <div key={item.id} className="bg-white rounded-lg shadow-lg overflow-hidden flex flex-col">
+                                <img 
+                                    src={customImages[item.id] || 'https://placehold.co/400x300/e2e8f0/cbd5e0?text=No+Image'} 
+                                    alt={item.name} 
+                                    className="w-full h-48 object-cover"
+                                    onError={(e) => { e.target.onerror = null; e.target.src='https://placehold.co/400x300/e2e8f0/cbd5e0?text=Image+Error'; }}
                                 />
-                                <h3 className="text-xl font-semibold text-gray-900 mb-2">{item.name}</h3>
-                                <p className="text-gray-600 text-sm mb-3 flex-grow">{item.description || 'No description provided.'}</p>
-                                <div className="flex items-center justify-between mt-auto pt-2 border-t border-gray-100">
-                                    <span className={`text-lg font-bold ${item.stock === 0 ? 'text-red-600' : 'text-green-700'}`}>
-                                        Stock: {item.stock || 0}
-                                    </span>
-                                    {(role === 'orderer') && (
-                                        <button
-                                            onClick={() => handleAddItemClick(item)}
-                                            className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors duration-200 text-sm font-medium"
-                                        >
-                                            <i className="fas fa-cart-plus mr-2"></i>Add to Cart
-                                        </button>
-                                    )}
-                                    {role === 'admin' && (
-                                        <button
-                                            onClick={() => handleEditClick(item)}
-                                            className="px-4 py-2 bg-yellow-500 text-white rounded-md hover:bg-yellow-600 transition-colors duration-200 text-sm font-medium"
-                                        >
-                                            <i className="fas fa-edit mr-2"></i>Edit
-                                        </button>
-                                    )}
+                                <div className="p-4 flex flex-col flex-grow">
+                                    <h3 className="text-xl font-bold">{item.name}</h3>
+                                    <p className="text-gray-600 mt-2 flex-grow">{item.description}</p>
+                                    <div className="mt-4">
+                                        <form onSubmit={(e) => {
+                                            e.preventDefault();
+                                            const quantity = parseInt(e.target.elements.quantity.value);
+                                            handleAddToCart(item, quantity);
+                                            e.target.elements.quantity.value = 1;
+                                        }} className="flex items-center space-x-2">
+                                            <input type="number" name="quantity" defaultValue="1" min="1" className="w-16 p-2 border rounded" />
+                                            <button type="submit" className="flex-1 bg-blue-600 text-white p-2 rounded hover:bg-blue-700">Add to Cart</button>
+                                        </form>
+                                        {user.role === 'admin' && (
+                                            <button onClick={() => handleAddPicture(item.id)} className="w-full mt-2 bg-yellow-500 text-white p-2 rounded hover:bg-yellow-600">
+                                                Add Picture
+                                            </button>
+                                        )}
+                                    </div>
                                 </div>
                             </div>
                         ))}
                     </div>
-
-                    {/* Add Item to Cart Modal */}
-                    {isAddItemModalOpen && selectedItem && (
-                        <div className="fixed inset-0 bg-gray-600 bg-opacity-75 flex items-center justify-center p-4 z-50">
-                            <div className="bg-white p-8 rounded-lg shadow-xl w-full max-w-md">
-                                <h3 className="text-2xl font-bold mb-4 text-gray-900">Add {selectedItem.name} to Cart</h3>
-                                <div className="mb-4">
-                                    <label htmlFor="quantity" className="block text-gray-700 text-lg font-medium mb-2">Quantity:</label>
-                                    <input
-                                        type="number"
-                                        id="quantity"
-                                        value={quantity}
-                                        onChange={(e) => setQuantity(Math.max(1, parseInt(e.target.value) || 1))}
-                                        min="1"
-                                        className="w-full px-4 py-2 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500 text-lg"
-                                    />
-                                </div>
-                                <div className="flex justify-end space-x-4">
-                                    <button
-                                        onClick={() => setIsAddItemModalOpen(false)}
-                                        className="px-6 py-2 bg-gray-300 text-gray-800 rounded-md hover:bg-gray-400 transition-colors duration-200 font-semibold"
-                                    >
-                                        Cancel
-                                    </button>
-                                    <button
-                                        onClick={handleAddToCart}
-                                        className="px-6 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors duration-200 font-semibold"
-                                    >
-                                        Add to Cart
-                                    </button>
-                                </div>
-                            </div>
-                        </div>
-                    )}
-
-                    {/* Admin Inventory Edit Modal */}
-                    {isEditModalOpen && editItemData && (
-                        <AdminInventoryEditModal
-                            item={editItemData}
-                            onClose={() => setIsEditModalOpen(false)}
-                            onSave={handleUpdateInventory}
-                            showUserModal={showUserModal}
-                        />
-                    )}
                 </div>
             );
         };
 
-        {/* Mini Cart Preview Component */}
-        const MiniCartPreview = ({ cart }) => {
-            const totalItems = cart.reduce((sum, item) => sum + item.quantity, 0);
-
-            if (totalItems === 0) {
-                return (
-                    <div className="flex items-center space-x-2 text-gray-600">
-                        <i className="fas fa-shopping-cart text-xl"></i>
-                        <span>Cart is Empty</span>
-                    </div>
-                );
-            }
-
-            return (
-                <div className="flex items-center space-x-2 text-blue-700 font-semibold">
-                    <i className="fas fa-shopping-cart text-xl"></i>
-                    <span>{totalItems} items in cart</span>
-                </div>
-            );
-        };
-
-        {/* Admin Inventory Edit Modal Component */}
-        const AdminInventoryEditModal = ({ item, onClose, onSave, showUserModal }) => {
-            const [description, setDescription] = useState(item.description || '');
-            const [imageUrl, setImageUrl] = useState(item.imageUrl || '');
-            const [stock, setStock] = useState(item.stock || 0);
-
-            const handleSubmit = (e) => {
-                e.preventDefault();
-                // Confirmation before saving changes
-                showUserModal(
-                    `Are you sure you want to update "${item.name}"?`,
-                    'confirm',
-                    () => onSave(item.id, { description, imageUrl, stock: parseInt(stock) }),
-                    null,
-                    true
-                );
-            };
-
-            return (
-                <div className="fixed inset-0 bg-gray-600 bg-opacity-75 flex items-center justify-center p-4 z-50">
-                    <div className="bg-white p-8 rounded-lg shadow-xl w-full max-w-lg">
-                        <h3 className="text-2xl font-bold mb-6 text-gray-900">Edit Inventory Item: {item.name}</h3>
-                        <form onSubmit={handleSubmit} className="space-y-4">
-                            <div>
-                                <label htmlFor="editDescription" className="block text-gray-700 font-medium mb-1">Description:</label>
-                                <textarea
-                                    id="editDescription"
-                                    value={description}
-                                    onChange={(e) => setDescription(e.target.value)}
-                                    rows="3"
-                                    className="w-full px-4 py-2 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500"
-                                />
-                            </div>
-                            <div>
-                                <label htmlFor="editImageUrl" className="block text-gray-700 font-medium mb-1">Image URL:</label>
-                                <input
-                                    type="url"
-                                    id="editImageUrl"
-                                    value={imageUrl}
-                                    onChange={(e) => setImageUrl(e.target.value)}
-                                    className="w-full px-4 py-2 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500"
-                                />
-                                {imageUrl && (
-                                    <img src={imageUrl} alt="Preview" className="mt-2 w-24 h-24 object-contain border rounded-md" />
-                                )}
-                            </div>
-                            <div>
-                                <label htmlFor="editStock" className="block text-gray-700 font-medium mb-1">Stock Quantity:</label>
-                                <input
-                                    type="number"
-                                    id="editStock"
-                                    value={stock}
-                                    onChange={(e) => setStock(Math.max(0, parseInt(e.target.value) || 0))}
-                                    min="0"
-                                    className="w-full px-4 py-2 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500"
-                                />
-                            </div>
-                            <div className="flex justify-end space-x-4 pt-4">
-                                <button
-                                    type="button"
-                                    onClick={onClose}
-                                    className="px-6 py-2 bg-gray-300 text-gray-800 rounded-md hover:bg-gray-400 transition-colors duration-200 font-semibold"
-                                >
-                                    Cancel
-                                </button>
-                                <button
-                                    type="submit"
-                                    className="px-6 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors duration-200 font-semibold"
-                                >
-                                    Save Changes
-                                </button>
-                            </div>
-                        </form>
-                    </div>
-                </div>
-            );
-        };
-
-
-        {/* Cart Page Component */}
-        const CartPage = ({ ordersDb, showUserModal, userId, userDisplayName, warehouseDb }) => {
-            const [cart, setCart] = useState(JSON.parse(sessionStorage.getItem('dlv_cart')) || []);
-            const [specialRequest, setSpecialRequest] = useState('');
-            const [projectSites, setProjectSites] = useState([]);
+        const CartPage = ({ setCurrentPage }) => {
+            const { user, firebaseInstances, showModal } = useAppContext();
+            const [cart, setCart] = useState(() => {
+                try {
+                    const savedCart = sessionStorage.getItem('dlv_cart');
+                    return savedCart ? JSON.parse(savedCart) : {};
+                } catch { return {}; }
+            });
+            const [sites, setSites] = useState([]);
             const [selectedSite, setSelectedSite] = useState('');
-            const [loadingSites, setLoadingSites] = useState(true);
+            const [specialRequests, setSpecialRequests] = useState('');
+            const [isPlacingOrder, setIsPlacingOrder] = useState(false);
 
             useEffect(() => {
-                logDebug("CartPage: Fetching project sites...");
-                // Fetch project sites from dlv-warehouse-tracker
+                if (!firebaseInstances) return;
                 const fetchSites = async () => {
-                    if (!warehouseDb) {
-                        showUserModal("Site database not initialized.", "error");
-                        setLoadingSites(false);
-                        return;
-                    }
                     try {
-                        const sitesColRef = collection(warehouseDb, `artifacts/${WAREHOUSE_TRACKER_DATA_APP_ID}/public/data/sites`);
-                        const q = query(sitesColRef);
-                        const querySnapshot = await getDocs(q);
-                        const sites = querySnapshot.docs.map(doc => doc.data().name).filter(Boolean); // Assuming 'name' field
-                        setProjectSites(sites);
-                        if (sites.length > 0) {
-                            setSelectedSite(sites[0]); // Select first site by default
+                        const sitesCol = window.collection(firebaseInstances.secondaryDb, '/artifacts/default-app-id/public/data/sites');
+                        const sitesSnapshot = await window.getDocs(sitesCol);
+                        const sitesList = sitesSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+                        setSites(sitesList);
+                        if(sitesList.length > 0) {
+                            setSelectedSite(sitesList[0].id);
                         }
-                        logDebug("CartPage: Project sites loaded.", sites);
-                    } catch (err) {
-                        console.error("CartPage: Error fetching project sites:", err);
-                        showUserModal(`Failed to load project sites: ${err.message}`, "error");
-                    } finally {
-                        setLoadingSites(false);
+                    } catch (error) {
+                        console.error("Error fetching sites:", error);
+                        showModal("Failed to load project sites.");
                     }
                 };
                 fetchSites();
-            }, [warehouseDb]);
+            }, [firebaseInstances]);
 
-            // Sync cart with sessionStorage
-            useEffect(() => {
-                sessionStorage.setItem('dlv_cart', JSON.stringify(cart));
-            }, [cart]);
-
-            const updateQuantity = (id, newQuantity) => {
-                const newCart = cart.map(item =>
-                    item.id === id ? { ...item, quantity: Math.max(1, newQuantity) } : item
-                );
+            const updateQuantity = (itemId, newQuantity) => {
+                if (newQuantity <= 0) {
+                    removeItem(itemId);
+                    return;
+                }
+                const newCart = { ...cart };
+                newCart[itemId].quantity = newQuantity;
                 setCart(newCart);
+                sessionStorage.setItem('dlv_cart', JSON.stringify(newCart));
             };
 
-            const removeItem = (id) => {
-                showUserModal(
-                    "Are you sure you want to remove this item from your cart?",
-                    'confirm',
-                    () => setCart(cart.filter(item => item.id !== id)),
-                    null,
-                    true
-                );
+            const removeItem = (itemId) => {
+                const newCart = { ...cart };
+                delete newCart[itemId];
+                setCart(newCart);
+                sessionStorage.setItem('dlv_cart', JSON.stringify(newCart));
             };
 
-            const placeOrder = async () => {
-                logDebug("CartPage: Attempting to place order.");
-                // Ensure ordersDb and userId are available before proceeding
-                if (!ordersDb) {
-                    showUserModal("Orders database connection not established. Please refresh or check console for errors.", "error");
-                    return;
-                }
-                if (!userId) { // userId should be available from AuthContext after auth is complete
-                    showUserModal("User not authenticated. Please try logging in again.", "error");
-                    return;
-                }
-                if (cart.length === 0 && !specialRequest.trim()) {
-                    showUserModal("Your cart is empty and no special request has been entered.", "error");
+            const handlePlaceOrder = async () => {
+                if (Object.keys(cart).length === 0) {
+                    showModal("Your cart is empty.");
                     return;
                 }
                 if (!selectedSite) {
-                    showUserModal("Please select a project site for your order.", "error");
+                    showModal("Please select a project site.");
                     return;
                 }
+                
+                setIsPlacingOrder(true);
+                try {
+                    const orderData = {
+                        userId: user.id,
+                        username: user.username,
+                        siteId: selectedSite,
+                        siteName: sites.find(s => s.id === selectedSite)?.name || 'Unknown Site',
+                        specialRequests,
+                        status: 'Pending',
+                        createdAt: window.serverTimestamp(),
+                        items: Object.values(cart).map(item => ({
+                            id: item.id,
+                            name: item.name,
+                            quantity: item.quantity,
+                            status: 'Pending'
+                        })),
+                        communication: []
+                    };
+                    
+                    const ordersCol = window.collection(firebaseInstances.primaryDb, 'orders');
+                    await window.addDoc(ordersCol, orderData);
 
-                // NEW DEBUG LOGS HERE:
-                logDebug(`CartPage: Current userId: ${userId}`);
-                logDebug(`CartPage: ordersDb initialized: ${!!ordersDb}`);
-                logDebug(`CartPage: Attempting to write to collection path: artifacts/${CANVAS_APP_ID}/orders`);
+                    setCart({});
+                    sessionStorage.removeItem('dlv_cart');
+                    showModal("Order placed successfully!", () => {
+                        setCurrentPage('order_history');
+                    });
 
-
-                showUserModal(
-                    "Are you sure you want to place this order?",
-                    'confirm',
-                    async () => {
-                        try {
-                            const orderItems = cart.map(item => ({
-                                itemId: item.id,
-                                name: item.name,
-                                quantity: item.quantity,
-                                imageUrl: item.imageUrl || '',
-                                description: item.description || '',
-                                itemStatus: 'Pending', // Initial status for individual items
-                            }));
-
-                            const newOrder = {
-                                userId: userId,
-                                userName: userDisplayName,
-                                items: orderItems,
-                                specialRequest: specialRequest.trim(),
-                                projectSite: selectedSite,
-                                orderStatus: 'Placed', // Initial overall order status
-                                orderDate: new Date().toISOString(),
-                                followUpRequests: [], // Array to store follow-up messages
-                            };
-
-                            await addDoc(collection(ordersDb, `artifacts/${CANVAS_APP_ID}/orders`), newOrder);
-                            sessionStorage.removeItem('dlv_cart'); // Clear cart after successful order
-                            setCart([]);
-                            setSpecialRequest('');
-                            showUserModal("Your order has been placed successfully!", "success");
-                            logDebug("CartPage: Order placed successfully:", newOrder);
-                        } catch (error) {
-                            console.error("CartPage: Error placing order:", error);
-                            showUserModal(`Failed to place order: ${error.message}`, "error");
-                        }
-                    },
-                    null,
-                    true
-                );
+                } catch (error) {
+                    console.error("Error placing order:", error);
+                    if (error.code === 'permission-denied') {
+                        showModal("Order failed: Permission Denied. Please ensure the Firebase security rules for the 'dlvorders' project are set correctly in the Firebase Console.");
+                    } else {
+                        showModal(`Failed to place order. Error: ${error.message}`);
+                    }
+                } finally {
+                    setIsPlacingOrder(false);
+                }
             };
-
-            const totalItemsInCart = cart.reduce((sum, item) => sum + item.quantity, 0);
+            
+            const cartItems = Object.values(cart);
 
             return (
-                <div className="p-4">
-                    <h2 className="text-3xl font-bold mb-6 text-gray-800">My Cart</h2>
-
-                    {cart.length === 0 && !specialRequest.trim() ? (
-                        <div className="text-center text-gray-500 text-xl py-10">
-                            Your cart is empty. Add items from the Inventory page or make a special request below.
-                        </div>
+                <div className="p-8">
+                    <h2 className="text-3xl font-bold mb-6">Shopping Cart</h2>
+                    {cartItems.length === 0 ? (
+                        <p className="text-center text-gray-500 text-xl">Your cart is empty.</p>
                     ) : (
-                        <div className="space-y-6 mb-8">
-                            {cart.length > 0 && (
-                                <div className="bg-gray-50 p-6 rounded-lg shadow-inner">
-                                    <h3 className="text-2xl font-semibold mb-4 text-gray-800">Cart Items</h3>
-                                    <div className="space-y-4">
-                                        {cart.map(item => (
-                                            <div key={item.id} className="flex items-center bg-white p-4 rounded-md shadow-sm border border-gray-200">
-                                                <img
-                                                    src={item.imageUrl || `https://placehold.co/80x80/e0e0e0/000000?text=No+Image`}
-                                                    alt={item.name}
-                                                    className="w-20 h-20 object-contain rounded-md mr-4"
-                                                    onError={(e) => { e.target.onerror = null; e.target.src = `https://placehold.co/80x80/e0e0e0/000000?text=Image+Error`; }}
-                                                />
-                                                <div className="flex-grow">
-                                                    <p className="text-lg font-medium text-gray-900">{item.name}</p>
-                                                    <p className="text-sm text-gray-600">{item.description}</p>
-                                                </div>
-                                                <div className="flex items-center space-x-2">
-                                                    <button
-                                                        onClick={() => updateQuantity(item.id, item.quantity - 1)}
-                                                        className="px-3 py-1 bg-gray-200 rounded-md hover:bg-gray-300 transition-colors"
-                                                    >
-                                                        -
-                                                    </button>
-                                                    <span className="text-lg font-semibold w-10 text-center">{item.quantity}</span>
-                                                    <button
-                                                        onClick={() => updateQuantity(item.id, item.quantity + 1)}
-                                                        className="px-3 py-1 bg-gray-200 rounded-md hover:bg-gray-300 transition-colors"
-                                                    >
-                                                        +
-                                                    </button>
-                                                    <button
-                                                        onClick={() => removeItem(item.id)}
-                                                        className="ml-4 p-2 text-red-500 hover:text-red-700 transition-colors"
-                                                        title="Remove item"
-                                                    >
-                                                        <i className="fas fa-trash-alt"></i>
-                                                    </button>
-                                                </div>
-                                            </div>
-                                        ))}
-                                    </div>
-                                    <p className="text-right text-xl font-bold mt-4">Total Items: {totalItemsInCart}</p>
+                        <div className="bg-white p-6 rounded-lg shadow-md">
+                            {cartItems.map(item => (
+                                <div key={item.id} className="flex items-center justify-between py-4 border-b">
+                                    <span className="font-semibold w-1/2">{item.name}</span>
+                                    <input type="number" value={item.quantity} onChange={e => updateQuantity(item.id, parseInt(e.target.value))} className="w-20 p-1 border rounded text-center" />
+                                    <button onClick={() => removeItem(item.id)} className="text-red-500 hover:text-red-700">Remove</button>
                                 </div>
-                            )}
-
-                            <div className="bg-gray-50 p-6 rounded-lg shadow-inner">
-                                <h3 className="text-2xl font-semibold mb-4 text-gray-800">Special Order Request</h3>
-                                <textarea
-                                    className="w-full p-4 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500"
-                                    rows="5"
-                                    placeholder="Request items not found in inventory (e.g., 'Custom length conduit - 100ft', 'Specific brand of relay - model XYZ')"
-                                    value={specialRequest}
-                                    onChange={(e) => setSpecialRequest(e.target.value)}
-                                ></textarea>
-                            </div>
-
-                            <div className="bg-gray-50 p-6 rounded-lg shadow-inner">
-                                <h3 className="text-2xl font-semibold mb-4 text-gray-800">Select Project Site</h3>
-                                {loadingSites ? (
-                                    <p>Loading project sites...</p>
-                                ) : (
-                                    projectSites.length > 0 ? (
-                                        <select
-                                            className="w-full p-3 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500 text-lg"
-                                            value={selectedSite}
-                                            onChange={(e) => setSelectedSite(e.target.value)}
-                                        >
-                                            {projectSites.map((site, index) => (
-                                                <option key={index} value={site}>{site}</option>
-                                            ))}
-                                        </select>
-                                    ) : (
-                                        <p className="text-gray-600">No project sites available. Please contact admin.</p>
-                                    )
-                                )}
+                            ))}
+                            <div className="mt-6">
+                                <h3 className="text-xl font-semibold mb-4">Order Details</h3>
+                                <div className="mb-4">
+                                    <label className="block text-gray-700 font-bold mb-2">Project Site</label>
+                                    <select value={selectedSite} onChange={e => setSelectedSite(e.target.value)} className="w-full p-2 border rounded bg-white">
+                                        <option value="" disabled>Select a site</option>
+                                        {sites.map(site => <option key={site.id} value={site.id}>{site.name}</option>)}
+                                    </select>
+                                </div>
+                                <div className="mb-4">
+                                    <label className="block text-gray-700 font-bold mb-2">Special Requests</label>
+                                    <textarea value={specialRequests} onChange={e => setSpecialRequests(e.target.value)} className="w-full p-2 border rounded" rows="3"></textarea>
+                                </div>
+                                <button onClick={handlePlaceOrder} disabled={isPlacingOrder} className="w-full bg-green-600 text-white p-3 rounded-lg font-bold hover:bg-green-700 disabled:bg-gray-400">
+                                    {isPlacingOrder ? 'Placing Order...' : 'Place Order'}
+                                </button>
                             </div>
                         </div>
                     )}
-
-                    <button
-                        onClick={placeOrder}
-                        className="w-full py-4 bg-green-600 text-white text-xl font-bold rounded-md hover:bg-green-700 transition-colors duration-200 shadow-lg transform hover:-translate-y-1"
-                    >
-                        Place Order
-                    </button>
                 </div>
             );
         };
-
-        {/* Order History Page Component */}
-        const OrderHistoryPage = ({ ordersDb, showUserModal, userId }) => {
+        
+        const OrderHistoryPage = () => {
+            const { user, firebaseInstances, showModal } = useAppContext();
             const [orders, setOrders] = useState([]);
             const [loading, setLoading] = useState(true);
-            const [searchTerm, setSearchTerm] = useState('');
-            const [selectedOrder, setSelectedOrder] = useState(null); // For detailed view modal
-            const [followUpMessage, setFollowUpMessage] = useState('');
+            const [selectedOrder, setSelectedOrder] = useState(null);
+            const [newMessage, setNewMessage] = useState("");
 
             useEffect(() => {
-                logDebug("OrderHistoryPage: Fetching order history for userId:", userId);
-                if (!ordersDb || !userId) {
+                if (!firebaseInstances || !user) return;
+                setLoading(true);
+                const q = window.query(window.collection(firebaseInstances.primaryDb, "orders"), window.where("userId", "==", user.id));
+                const unsubscribe = window.onSnapshot(q, (querySnapshot) => {
+                    const ordersData = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })).sort((a, b) => (b.createdAt?.seconds || 0) - (a.createdAt?.seconds || 0));
+                    setOrders(ordersData);
                     setLoading(false);
-                    return;
-                }
-
-                // Query orders for the current user ID
-                const ordersColRef = collection(ordersDb, `artifacts/${CANVAS_APP_ID}/orders`);
-                // Note: Firestore does not support `orderBy` on multiple fields without an index,
-                // and for list operations in rules, it is simpler to fetch and sort client-side.
-                const q = query(ordersColRef, where("userId", "==", userId));
-
-                const unsubscribe = onSnapshot(q, (snapshot) => {
-                    logDebug("OrderHistoryPage: Order history snapshot received for user:", userId);
-                    const userOrders = snapshot.docs.map(doc => ({
-                        id: doc.id,
-                        ...doc.data(),
-                        orderDate: doc.data().orderDate ? new Date(doc.data().orderDate) : null // Convert to Date object
-                    })).sort((a, b) => b.orderDate - a.orderDate); // Sort by date descending
-                    setOrders(userOrders);
-                    setLoading(false);
-                    logDebug("OrderHistoryPage: Order history loaded, loading set to false.");
-                }, (err) => {
-                    console.error("OrderHistoryPage: Error fetching order history:", err);
-                    showUserModal(`Failed to load order history: ${err.message}`, "error");
+                }, (error) => {
+                    console.error("Error fetching order history:", error);
+                    if (error.code === 'permission-denied') {
+                         showModal("Could not load order history due to a permissions issue. Please check the security rules in your Firebase project.");
+                    } else {
+                        showModal("Failed to load order history.");
+                    }
                     setLoading(false);
                 });
-
                 return () => unsubscribe();
-            }, [ordersDb, userId]);
-
-            const filteredOrders = orders.filter(order =>
-                order.id.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                order.orderStatus.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                (order.projectSite && order.projectSite.toLowerCase().includes(searchTerm.toLowerCase())) ||
-                order.items.some(item =>
-                    item.name.toLowerCase().includes(searchTerm.toLowerCase())
-                ) ||
-                (order.specialRequest && order.specialRequest.toLowerCase().includes(searchTerm.toLowerCase()))
-            );
-
-            const handleFollowUp = async (orderId) => {
-                logDebug("OrderHistoryPage: Attempting to send follow-up for order:", orderId);
-                if (!followUpMessage.trim()) {
-                    showUserModal("Please enter a message for your follow-up request.", "error");
-                    return;
+            }, [firebaseInstances, user]);
+            
+            const handleSendMessage = async () => {
+                if (!newMessage.trim() || !selectedOrder) return;
+                const updatedCommunication = [
+                    ...(selectedOrder.communication || []),
+                    { sender: user.username, message: newMessage, timestamp: new Date() }
+                ];
+                try {
+                    const orderRef = window.doc(firebaseInstances.primaryDb, 'orders', selectedOrder.id);
+                    await window.updateDoc(orderRef, { communication: updatedCommunication });
+                    setSelectedOrder(prev => ({...prev, communication: updatedCommunication}));
+                    setNewMessage("");
+                } catch (error) {
+                    console.error("Error sending message:", error);
+                    showModal("Failed to send message.");
                 }
-                if (!ordersDb) return;
-
-                showUserModal(
-                    "Send this follow-up message?",
-                    'confirm',
-                    async () => {
-                        try {
-                            const orderDocRef = doc(ordersDb, `artifacts/${CANVAS_APP_ID}/orders`, orderId);
-                            await updateDoc(orderDocRef, {
-                                followUpRequests: [...(selectedOrder.followUpRequests || []), {
-                                    message: followUpMessage.trim(),
-                                    timestamp: new Date().toISOString(),
-                                    from: userId // Indicate who sent the message
-                                }]
-                            });
-                            showUserModal("Follow-up request sent!", "success");
-                            setFollowUpMessage(''); // Clear input
-                            setSelectedOrder(prev => ({ // Update the selected order in state
-                                ...prev,
-                                followUpRequests: [...(prev.followUpRequests || []), {
-                                    message: followUpMessage.trim(),
-                                    timestamp: new Date().toISOString(),
-                                    from: userId
-                                }]
-                            }));
-                            logDebug("OrderHistoryPage: Follow-up sent successfully.");
-                        } catch (error) {
-                            console.error("OrderHistoryPage: Error sending follow-up:", error);
-                            showUserModal(`Failed to send follow-up: ${error.message}`, "error");
-                        }
-                    },
-                    null,
-                    true
-                );
             };
 
+            if (loading) return <LoadingSpinner message="Loading Order History..." />;
+            
+            return (
+                <div className="p-8 grid grid-cols-1 md:grid-cols-3 gap-8">
+                    <div className="md:col-span-1">
+                        <h2 className="text-3xl font-bold mb-6">My Orders</h2>
+                        <div className="bg-white p-4 rounded-lg shadow-md space-y-3 max-h-[70vh] overflow-y-auto">
+                            {orders.length === 0 && <p>You have no orders.</p>}
+                            {orders.map(order => (
+                                <div key={order.id} onClick={() => setSelectedOrder(order)} className={`p-4 border rounded-lg cursor-pointer ${selectedOrder?.id === order.id ? 'bg-blue-100 border-blue-500' : 'hover:bg-gray-50'}`}>
+                                    <p className="font-semibold">Order #{order.id.substring(0, 6)}...</p>
+                                    <p>Site: {order.siteName}</p>
+                                    <p>Status: <span className="font-medium">{order.status}</span></p>
+                                    <p className="text-sm text-gray-500">{order.createdAt?.toDate().toLocaleString()}</p>
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+                    <div className="md:col-span-2 bg-white p-6 rounded-lg shadow-md">
+                        {selectedOrder ? (
+                            <div>
+                                <h3 className="text-2xl font-bold mb-4">Order Details</h3>
+                                <p><span className="font-semibold">Status:</span> {selectedOrder.status}</p>
+                                <p><span className="font-semibold">Site:</span> {selectedOrder.siteName}</p>
+                                <p><span className="font-semibold">Special Requests:</span> {selectedOrder.specialRequests || 'None'}</p>
+                                
+                                <h4 className="text-xl font-semibold mt-6 mb-2">Items</h4>
+                                <ul className="list-disc list-inside space-y-1">
+                                    {selectedOrder.items.map(item => (
+                                        <li key={item.id}>{item.name} (x{item.quantity}) - <span className="italic">{item.status}</span></li>
+                                    ))}
+                                </ul>
 
-            if (loading) {
-                return <div className="text-center py-8">Loading order history...</div>;
-            }
-
-            if (orders.length === 0) {
-                return <div className="text-center text-gray-500 text-xl py-10">No orders placed yet.</div>;
-            }
+                                <h4 className="text-xl font-semibold mt-6 mb-2">Communication</h4>
+                                <div className="border rounded-lg p-4 h-48 overflow-y-auto bg-gray-50 mb-4">
+                                    {(selectedOrder.communication || []).length === 0 && <p className="text-gray-500">No messages yet.</p>}
+                                    {(selectedOrder.communication || []).map((msg, i) => (
+                                        <p key={i}><span className="font-semibold">{msg.sender}:</span> {msg.message}</p>
+                                    ))}
+                                </div>
+                                <div className="flex space-x-2">
+                                    <input type="text" value={newMessage} onChange={e => setNewMessage(e.target.value)} placeholder="Type a follow-up message..." className="flex-grow p-2 border rounded" />
+                                    <button onClick={handleSendMessage} className="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700">Send</button>
+                                </div>
+                            </div>
+                        ) : (
+                            <p className="text-center text-gray-500 text-xl">Select an order to view details.</p>
+                        )}
+                    </div>
+                </div>
+            );
+        };
+        
+        const OrderStatusChecklist = ({ currentStatus, onStatusUpdate }) => {
+            const statuses = ["Processing", "Awaiting Pickup", "In Transit", "Delivered"];
+            const currentIndex = statuses.indexOf(currentStatus);
 
             return (
-                <div className="p-4">
-                    <h2 className="text-3xl font-bold mb-6 text-gray-800">My Orders</h2>
+                <div className="w-full">
+                    <div className="flex items-center">
+                        {statuses.map((status, index) => {
+                            const isCompleted = index < currentIndex;
+                            const isCurrent = index === currentIndex;
+                            
+                            const nodeColor = isCompleted || isCurrent ? 'bg-blue-600' : 'bg-gray-300';
+                            const textColor = isCompleted || isCurrent ? 'text-blue-600' : 'text-gray-500';
+                            const lineColor = isCompleted ? 'bg-blue-600' : 'bg-gray-300';
 
-                    <div className="mb-6">
-                        <input
-                            type="text"
-                            placeholder="Search orders by ID, status, item name, or request..."
-                            value={searchTerm}
-                            onChange={(e) => setSearchTerm(e.target.value)}
-                            className="w-full p-3 border border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500"
-                        />
-                    </div>
-
-                    <div className="space-y-4">
-                        {filteredOrders.map(order => (
-                            <div key={order.id} className="bg-white border border-gray-200 rounded-lg shadow-md p-4">
-                                <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-3">
-                                    <div className="mb-2 sm:mb-0">
-                                        <p className="text-gray-700 text-sm">Order ID: <span className="font-mono text-gray-900">{order.id}</span></p>
-                                        <p className="text-gray-700 text-sm">Date: {order.orderDate ? order.orderDate.toLocaleDateString() : 'N/A'}</p>
-                                        <p className="text-gray-700 text-sm">Site: <span className="font-medium">{order.projectSite || 'N/A'}</span></p>
+                            return (
+                                <React.Fragment key={status}>
+                                    <div className="flex flex-col items-center cursor-pointer" onClick={() => onStatusUpdate(status)}>
+                                        <div className={`w-6 h-6 rounded-full ${nodeColor} flex items-center justify-center`}>
+                                            {isCompleted && <span className="text-white font-bold text-sm">✓</span>}
+                                        </div>
+                                        <p className={`mt-2 text-sm text-center font-semibold ${textColor}`}>{status}</p>
                                     </div>
-                                    <span className={`px-3 py-1 rounded-full text-sm font-semibold
-                                        ${order.orderStatus === 'Placed' ? 'bg-blue-100 text-blue-800' :
-                                            order.orderStatus === 'Processing' ? 'bg-yellow-100 text-yellow-800' :
-                                            order.orderStatus === 'Completed' ? 'bg-green-100 text-green-800' :
-                                            order.orderStatus === 'Cancelled' ? 'bg-red-100 text-red-800' :
-                                            'bg-gray-100 text-gray-800'
-                                        }`}
-                                    >
-                                        Status: {order.orderStatus || 'Unknown'}
-                                    </span>
-                                </div>
-                                <div className="border-t border-gray-100 pt-3">
-                                    <p className="font-semibold text-gray-800 mb-2">Items:</p>
-                                    {/* Refactored conditional list rendering */}
-                                    {order.items.length > 0 ? (
-                                        <ul className="list-disc list-inside text-gray-600">
-                                            {order.items.map((item, idx) => (
-                                                <li key={idx}>
-                                                    {item.name} (x{item.quantity}) - <span className="font-medium">{item.itemStatus || 'Pending'}</span>
-                                                </li>
-                                            ))}
-                                        </ul>
-                                    ) : (
-                                        <p className="text-gray-600 italic">No standard items found for this order.</p>
+                                    {index < statuses.length - 1 && (
+                                        <div className={`flex-1 h-1 mx-2 ${lineColor}`}></div>
                                     )}
-                                    {order.specialRequest && (
-                                        <p className="mt-2 text-gray-700">
-                                            <span className="font-semibold">Special Request:</span> {order.specialRequest}
-                                        </p>
-                                    )}
-                                </div>
-                                <div className="mt-4 text-right">
-                                    <button
-                                        onClick={() => setSelectedOrder(order)}
-                                        className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors duration-200 text-sm font-medium"
-                                    >
-                                        View Details / Follow-up
-                                    </button>
-                                </div>
-                            </div>
-                        ))}
+                                </React.Fragment>
+                            );
+                        })}
                     </div>
-
-                    {/* Order Detail Modal */}
-                    {selectedOrder && (
-                        <div className="fixed inset-0 bg-gray-600 bg-opacity-75 flex items-center justify-center p-4 z-50">
-                            <div className="bg-white p-8 rounded-lg shadow-xl w-full max-w-2xl overflow-y-auto max-h-[90vh]">
-                                <h3 className="text-2xl font-bold mb-4 text-gray-900">Order Details: <span className="font-mono text-lg">{selectedOrder.id}</span></h3>
-                                <div className="mb-4">
-                                    <p><strong>Orderer:</strong> {selectedOrder.userName}</p>
-                                    <p><strong>Site:</strong> {selectedOrder.projectSite || 'N/A'}</p>
-                                    <p><strong>Date:</strong> {selectedOrder.orderDate ? selectedOrder.orderDate.toLocaleString() : 'N/A'}</p>
-                                    <p><strong>Overall Status:</strong> {selectedOrder.orderStatus}</p>
-                                </div>
-                                <div className="mb-6">
-                                    <h4 className="font-semibold text-lg mb-2">Requested Items:</h4>
-                                    {selectedOrder.items.length > 0 ? (
-                                        <ul className="space-y-2">
-                                            {selectedOrder.items.map((item, idx) => (
-                                                <li key={idx} className="flex items-center p-2 bg-gray-50 rounded-md">
-                                                    <img
-                                                        src={item.imageUrl || `https://placehold.co/50x50/e0e0e0/000000?text=No+Img`}
-                                                        alt={item.name}
-                                                        className="w-12 h-12 object-contain rounded-sm mr-3"
-                                                        onError={(e) => { e.target.onerror = null; e.target.src = `https://placehold.co/50x50/e0e0e0/000000?text=Image+Error`; }}
-                                                    />
-                                                    <div className="flex-grow">
-                                                        <p className="font-medium text-gray-800">{item.name} (x{item.quantity})</p>
-                                                        <p className="text-sm text-gray-600">Status: <span className="font-semibold">{item.itemStatus || 'Pending'}</span></p>
-                                                    </div>
-                                                </li>
-                                            ))}
-                                        </ul>
-                                    ) : (
-                                        <p className="text-gray-600 italic">No standard items requested.</p>
-                                    )}
-                                    {selectedOrder.specialRequest && (
-                                        <p className="mt-4 p-3 bg-blue-50 rounded-md text-blue-800 border border-blue-200">
-                                            <span className="font-semibold">Special Request:</span> {selectedOrder.specialRequest}
-                                        </p>
-                                    )}
-                                </div>
-
-                                <div className="mb-6">
-                                    <h4 className="font-semibold text-lg mb-2">Follow-up Communication:</h4>
-                                    <div className="max-h-40 overflow-y-auto border border-gray-200 rounded-md p-3 bg-gray-50 space-y-2 mb-3">
-                                        {selectedOrder.followUpRequests && selectedOrder.followUpRequests.length > 0 ? (
-                                            selectedOrder.followUpRequests.map((req, idx) => (
-                                                <div key={idx} className={`text-sm bg-white p-2 rounded-md shadow-sm ${req.from === selectedOrder.userId ? 'text-blue-800' : 'text-green-800'}`}>
-                                                    <p className="font-medium text-gray-700">
-                                                        {new Date(req.timestamp).toLocaleString()} - From {req.from === userId ? 'You' : 'Warehouse/Admin'}:
-                                                    </p>
-                                                    <p className="pl-4">{req.message}</p>
-                                                </div>
-                                            ))
-                                        ) : (
-                                            <p className="text-gray-600 italic">No communication yet.</p>
-                                        )}
-                                    </div>
-                                    <textarea
-                                        className="w-full p-2 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500"
-                                        rows="3"
-                                        placeholder="Type your follow-up message here..."
-                                        value={followUpMessage}
-                                        onChange={(e) => setFollowUpMessage(e.target.value)}
-                                    ></textarea>
-                                    <button
-                                        onClick={() => handleFollowUp(selectedOrder.id)}
-                                        className="mt-2 px-4 py-2 bg-purple-600 text-white rounded-md hover:bg-purple-700 transition-colors duration-200 text-sm font-medium"
-                                    >
-                                        Send Follow-up
-                                    </button>
-                                </div>
-
-                                <div className="flex justify-end">
-                                    <button
-                                        onClick={() => setSelectedOrder(null)}
-                                        className="px-6 py-2 bg-gray-300 text-gray-800 rounded-md hover:bg-gray-400 transition-colors duration-200 font-semibold"
-                                    >
-                                        Close
-                                    </button>
-                                </div>
-                            </div>
-                        </div>
-                    )}
                 </div>
             );
         };
 
-        {/* Order Management Page Component (Warehouse/Admin) */}
-        const OrderManagementPage = ({ ordersDb, showUserModal, userId }) => {
-            const [allOrders, setAllOrders] = useState([]);
+        const OrderManagementPage = () => {
+            const { user, firebaseInstances, showModal } = useAppContext();
+            const [orders, setOrders] = useState([]);
             const [loading, setLoading] = useState(true);
-            const [searchTerm, setSearchTerm] = useState('');
-            const [selectedOrder, setSelectedOrder] = useState(null); // For detail/edit modal
-            const [orderStatusOptions] = useState(['Placed', 'Processing', 'Ready for Pickup', 'Completed', 'Cancelled']);
-            const [itemStatusOptions] = useState(['Pending', 'In Stock', 'Ordered', 'Ready for Pickup', 'Completed', 'Cancelled']);
+            const [selectedOrder, setSelectedOrder] = useState(null);
+            const [newMessage, setNewMessage] = useState("");
+
+            const ITEM_STATUSES = ["Pending", "Picked", "Out of Stock", "Substituted"];
 
             useEffect(() => {
-                logDebug("OrderManagementPage: Fetching all orders...");
-                if (!ordersDb) {
+                if (!firebaseInstances) return;
+                setLoading(true);
+                const q = window.query(window.collection(firebaseInstances.primaryDb, "orders"));
+                const unsubscribe = window.onSnapshot(q, (querySnapshot) => {
+                    const ordersData = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })).sort((a, b) => (b.createdAt?.seconds || 0) - (a.createdAt?.seconds || 0));
+                    setOrders(ordersData);
+                    if (selectedOrder) {
+                        const updatedSelectedOrder = ordersData.find(o => o.id === selectedOrder.id);
+                        setSelectedOrder(updatedSelectedOrder || null);
+                    }
                     setLoading(false);
-                    return;
-                }
-
-                // Get role from AuthContext
-                const { role } = useContext(AuthContext);
-
-                // Only allow warehouse/admin to list all orders
-                if (role !== 'warehouse' && role !== 'admin') {
-                    showUserModal("You do not have permission to view Order Management.", "error");
-                    setLoading(false);
-                    setAllOrders([]); // Clear any potentially loaded data
-                    return;
-                }
-
-                const ordersColRef = collection(ordersDb, `artifacts/${CANVAS_APP_ID}/orders`);
-                const q = query(ordersColRef);
-
-                const unsubscribe = onSnapshot(q, (snapshot) => {
-                    logDebug("OrderManagementPage: All orders snapshot received.");
-                    const ordersData = snapshot.docs.map(doc => ({
-                        id: doc.id,
-                        ...doc.data(),
-                        orderDate: doc.data().orderDate ? new Date(doc.data().orderDate) : null // Convert to Date object
-                    })).sort((a, b) => b.orderDate - a.orderDate); // Sort by date descending
-                    setAllOrders(ordersData);
-                    setLoading(false);
-                    logDebug("OrderManagementPage: All orders loaded, loading set to false.");
-                }, (err) => {
-                    console.error("OrderManagementPage: Error fetching all orders:", err);
-                    showUserModal(`Failed to load all orders: ${err.message}`, "error");
+                }, (error) => {
+                    console.error("Error fetching orders:", error);
+                     if (error.code === 'permission-denied') {
+                         showModal("Could not load orders due to a permissions issue. Please check the security rules in your Firebase project.");
+                    } else {
+                        showModal("Failed to load orders.");
+                    }
                     setLoading(false);
                 });
-
                 return () => unsubscribe();
-            }, [ordersDb, userId, useContext(AuthContext).role]); // Depend on role to re-run if role changes
-
-            const filteredOrders = allOrders.filter(order =>
-                order.id.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                order.userName.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                order.orderStatus.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                (order.projectSite && order.projectSite.toLowerCase().includes(searchTerm.toLowerCase())) ||
-                order.items.some(item =>
-                    item.name.toLowerCase().includes(searchTerm.toLowerCase())
-                ) ||
-                (order.specialRequest && order.specialRequest.toLowerCase().includes(searchTerm.toLowerCase()))
-            );
-
-            const handleUpdateOrderStatus = async (orderId, newStatus) => {
-                logDebug("OrderManagementPage: Attempting to update overall order status for order:", orderId, newStatus);
-                if (!ordersDb) return;
-                showUserModal(
-                    `Change overall status of order ${orderId} to "${newStatus}"?`,
-                    'confirm',
-                    async () => {
-                        try {
-                            const docRef = doc(ordersDb, `artifacts/${CANVAS_APP_ID}/orders`, orderId);
-                            await updateDoc(docRef, { orderStatus: newStatus });
-                            showUserModal("Order status updated!", "success");
-                            // Update selected order in state if it's currently open
-                            if (selectedOrder && selectedOrder.id === orderId) {
-                                setSelectedOrder(prev => ({ ...prev, orderStatus: newStatus }));
-                            }
-                            logDebug("OrderManagementPage: Overall order status updated successfully.");
-                        } catch (error) {
-                            console.error("OrderManagementPage: Error updating order status:", error);
-                            showUserModal(`Failed to update order status: ${error.message}`, "error");
-                        }
-                    },
-                    null,
-                    true
-                );
+            }, [firebaseInstances]);
+            
+            const updateOrderStatus = async (orderId, status) => {
+                try {
+                    const orderRef = window.doc(firebaseInstances.primaryDb, 'orders', orderId);
+                    await window.updateDoc(orderRef, { status });
+                } catch (error) {
+                    console.error("Error updating order status:", error);
+                    showModal("Failed to update order status.");
+                }
             };
-
-            const handleUpdateItemStatus = async (orderId, itemIndex, newItemStatus) => {
-                logDebug("OrderManagementPage: Attempting to update item status for order:", orderId, "item index:", itemIndex, "new status:", newItemStatus);
-                if (!ordersDb) return;
-
-                const orderToUpdate = allOrders.find(order => order.id === orderId);
+            
+            const updateItemStatus = async (orderId, itemIndex, status) => {
+                const orderToUpdate = orders.find(o => o.id === orderId);
                 if (!orderToUpdate) return;
 
                 const updatedItems = [...orderToUpdate.items];
-                updatedItems[itemIndex].itemStatus = newItemStatus;
-
-                showUserModal(
-                    `Change status of "${updatedItems[itemIndex].name}" to "${newItemStatus}"?`,
-                    'confirm',
-                    async () => {
-                        try {
-                            const docRef = doc(ordersDb, `artifacts/${CANVAS_APP_ID}/orders`, orderId);
-                            await updateDoc(docRef, { items: updatedItems });
-                            showUserModal("Item status updated!", "success");
-                            // Update selected order in state if it's currently open
-                            if (selectedOrder && selectedOrder.id === orderId) {
-                                setSelectedOrder(prev => ({ ...prev, items: updatedItems }));
-                            }
-                            logDebug("OrderManagementPage: Item status updated successfully.");
-                        } catch (error) {
-                            console.error("OrderManagementPage: Error updating item status:", error);
-                            showUserModal(`Failed to update item status: ${err.message}`, "error");
-                        }
-                    },
-                    null,
-                    true
-                );
+                updatedItems[itemIndex].status = status;
+                
+                try {
+                    const orderRef = window.doc(firebaseInstances.primaryDb, 'orders', orderId);
+                    await window.updateDoc(orderRef, { items: updatedItems });
+                } catch (error) {
+                    console.error("Error updating item status:", error);
+                    showModal("Failed to update item status.");
+                }
             };
 
-            const handleReplyToFollowUp = async (orderId, message) => {
-                logDebug("OrderManagementPage: Attempting to send reply for order:", orderId, "message:", message);
-                if (!ordersDb || !message.trim()) return;
-
-                showUserModal(
-                    "Send this reply to the customer?",
-                    'confirm',
-                    async () => { // Changed to async function here
-                        try {
-                            // Ensure orderDocRef is defined within the async function scope
-                            const orderDocRef = doc(ordersDb, `artifacts/${CANVAS_APP_ID}/orders`, orderId);
-                            await updateDoc(orderDocRef, {
-                                followUpRequests: [...(selectedOrder.followUpRequests || []), {
-                                    message: message.trim(),
-                                    timestamp: new Date().toISOString(),
-                                    from: userId // Indicate who sent the message (Warehouse/Admin UID)
-                                }]
-                            });
-                            showUserModal("Reply sent!", "success");
-                            // Update the selected order in state to reflect the new message immediately
-                            setSelectedOrder(prev => ({
-                                ...prev,
-                                followUpRequests: [...(prev.followUpRequests || []), {
-                                    message: message.trim(),
-                                    timestamp: new Date().toISOString(),
-                                    from: userId
-                                }]
-                            }));
-                            logDebug("OrderManagementPage: Reply sent successfully.");
-                        } catch (error) {
-                            console.error("OrderManagementPage: Error sending reply:", error);
-                            showUserModal(`Failed to send reply: ${error.message}`, "error");
-                        }
-                    },
-                    null,
-                    true
-                );
+            const handleSendMessage = async () => {
+                if (!newMessage.trim() || !selectedOrder) return;
+                const updatedCommunication = [
+                    ...(selectedOrder.communication || []),
+                    { sender: user.username, message: newMessage, timestamp: new Date() }
+                ];
+                try {
+                    const orderRef = window.doc(firebaseInstances.primaryDb, 'orders', selectedOrder.id);
+                    await window.updateDoc(orderRef, { communication: updatedCommunication });
+                    setNewMessage("");
+                } catch (error) {
+                    console.error("Error sending message:", error);
+                    showModal("Failed to send message.");
+                }
             };
 
-
-            if (loading) {
-                return <div className="text-center py-8">Loading all orders...</div>;
-            }
-
-            if (allOrders.length === 0) {
-                return <div className="text-center text-gray-500 text-xl py-10">No orders have been placed yet.</div>;
-            }
+            if (loading) return <LoadingSpinner message="Loading All Orders..." />;
 
             return (
-                <div className="p-4">
-                    <h2 className="text-3xl font-bold mb-6 text-gray-800">Order Management</h2>
-
-                    <div className="mb-6">
-                        <input
-                            type="text"
-                            placeholder="Search orders by ID, user, status, item name, or request..."
-                            value={searchTerm}
-                            onChange={(e) => setSearchTerm(e.target.value)}
-                            className="w-full p-3 border border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500"
-                        />
+                 <div className="p-8 grid grid-cols-1 md:grid-cols-3 gap-8">
+                    <div className="md:col-span-1">
+                        <h2 className="text-3xl font-bold mb-6">All Orders</h2>
+                        <div className="bg-white p-4 rounded-lg shadow-md space-y-3 max-h-[80vh] overflow-y-auto">
+                            {orders.length === 0 && <p>No orders found.</p>}
+                            {orders.map(order => (
+                                <div key={order.id} onClick={() => setSelectedOrder(order)} className={`p-4 border rounded-lg cursor-pointer ${selectedOrder?.id === order.id ? 'bg-blue-100 border-blue-500' : 'hover:bg-gray-50'}`}>
+                                    <p className="font-semibold">Order #{order.id.substring(0, 6)}... ({order.username})</p>
+                                    <p>Site: {order.siteName}</p>
+                                    <p>Status: <span className="font-medium">{order.status}</span></p>
+                                    <p className="text-sm text-gray-500">{order.createdAt?.toDate().toLocaleString()}</p>
+                                </div>
+                            ))}
+                        </div>
                     </div>
+                    <div className="md:col-span-2 bg-white p-6 rounded-lg shadow-md">
+                        {selectedOrder ? (
+                            <div>
+                                <h3 className="text-2xl font-bold mb-4">Manage Order #{selectedOrder.id.substring(0, 6)}</h3>
+                                
+                                <div className="mb-6 p-4 border rounded-lg bg-gray-50">
+                                    <label className="block font-semibold mb-3 text-gray-700">Order Progress</label>
+                                    <OrderStatusChecklist 
+                                        currentStatus={selectedOrder.status}
+                                        onStatusUpdate={(newStatus) => updateOrderStatus(selectedOrder.id, newStatus)}
+                                    />
+                                </div>
 
-                    <div className="space-y-4">
-                        {filteredOrders.map(order => (
-                            <div key={order.id} className="bg-white border border-gray-200 rounded-lg shadow-md p-4">
-                                <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-3">
-                                    <div className="mb-2 sm:mb-0">
-                                        <p className="text-gray-700 text-sm">Order ID: <span className="font-mono text-gray-900">{order.id}</span></p>
-                                        <p className="text-gray-700 text-sm">Orderer: <span className="font-medium">{order.userName || 'N/A'}</span></p>
-                                        <p className="text-gray-700 text-sm">Date: {order.orderDate ? order.orderDate.toLocaleDateString() : 'N/A'}</p>
-                                        <p className="text-gray-700 text-sm">Site: <span className="font-medium">{order.projectSite || 'N/A'}</span></p>
-                                    </div>
-                                    <span className={`px-3 py-1 rounded-full text-sm font-semibold
-                                        ${order.orderStatus === 'Placed' ? 'bg-blue-100 text-blue-800' :
-                                            order.orderStatus === 'Processing' ? 'bg-yellow-100 text-yellow-800' :
-                                            order.orderStatus === 'Ready for Pickup' ? 'bg-indigo-100 text-indigo-800' :
-                                            order.orderStatus === 'Completed' ? 'bg-green-100 text-green-800' :
-                                            order.orderStatus === 'Cancelled' ? 'bg-red-100 text-red-800' :
-                                            'bg-gray-100 text-gray-800'
-                                        }`}
+                                <div className="grid grid-cols-2 gap-4 mb-6">
+                                    <button 
+                                        onClick={() => updateOrderStatus(selectedOrder.id, "Waiting for Supplier")}
+                                        className={`p-2 rounded-lg text-white font-semibold transition-colors ${selectedOrder.status === 'Waiting for Supplier' ? 'bg-orange-500' : 'bg-orange-400 hover:bg-orange-500'}`}
                                     >
-                                        Status: {order.orderStatus || 'Unknown'}
-                                    </span>
-                                </div>
-                                <div className="border-t border-gray-100 pt-3">
-                                    <p className="font-semibold text-gray-800 mb-2">Items:</p>
-                                    {/* Refactored conditional list rendering */}
-                                    {order.items.length > 0 ? (
-                                        <ul className="list-disc list-inside text-gray-600">
-                                            {order.items.map((item, idx) => (
-                                                <li key={idx}>
-                                                    {item.name} (x{item.quantity}) - <span className="font-medium">{item.itemStatus || 'Pending'}</span>
-                                                </li>
-                                            ))}
-                                        </ul>
-                                    ) : (
-                                        <p className="text-gray-600 italic">No standard items found for this order.</p>
-                                    )}
-                                    {order.specialRequest && (
-                                        <p className="mt-2 text-gray-700">
-                                            <span className="font-semibold">Special Request:</span> {order.specialRequest}
-                                        </p>
-                                    )}
-                                </div>
-                                <div className="mt-4 text-right">
-                                    <button
-                                        onClick={() => setSelectedOrder(order)}
-                                        className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors duration-200 text-sm font-medium"
+                                        Set to: Waiting for Supplier
+                                    </button>
+                                    <button 
+                                        onClick={() => updateOrderStatus(selectedOrder.id, "Cancelled")}
+                                        className={`p-2 rounded-lg text-white font-semibold transition-colors ${selectedOrder.status === 'Cancelled' ? 'bg-red-600' : 'bg-red-500 hover:bg-red-600'}`}
                                     >
-                                        Manage Order
+                                       Set to: Cancelled
                                     </button>
                                 </div>
-                            </div>
-                        ))}
-                    </div>
 
-                    {/* Order Management Detail Modal */}
-                    {selectedOrder && (
-                        <div className="fixed inset-0 bg-gray-600 bg-opacity-75 flex items-center justify-center p-4 z-50">
-                            <div className="bg-white p-8 rounded-lg shadow-xl w-full max-w-3xl overflow-y-auto max-h-[90vh]">
-                                <h3 className="text-2xl font-bold mb-4 text-gray-900">Manage Order: <span className="font-mono text-lg">{selectedOrder.id}</span></h3>
-                                <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
-                                    <div>
-                                        <p><strong>Orderer:</strong> {selectedOrder.userName}</p>
-                                        <p><strong>Site:</strong> {selectedOrder.projectSite || 'N/A'}</p>
-                                        <p><strong>Date:</strong> {selectedOrder.orderDate ? selectedOrder.orderDate.toLocaleString() : 'N/A'}</p>
-                                        <div className="mt-2">
-                                            <label htmlFor="overallStatus" className="block text-gray-700 font-medium mb-1">Overall Status:</label>
-                                            <select
-                                                id="overallStatus"
-                                                value={selectedOrder.orderStatus}
-                                                onChange={(e) => handleUpdateOrderStatus(selectedOrder.id, e.target.value)}
-                                                className="w-full p-2 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500"
-                                            >
-                                                {orderStatusOptions.map(status => (
-                                                    <option key={status} value={status}>{status}</option>
-                                                ))}
+                                <p className="mb-1"><span className="font-semibold">Orderer:</span> {selectedOrder.username}</p>
+                                <p className="mb-4"><span className="font-semibold">Site:</span> {selectedOrder.siteName}</p>
+                                {selectedOrder.specialRequests && <p className="mb-4 p-3 bg-yellow-100 border border-yellow-200 rounded-lg"><span className="font-semibold">Special Requests:</span> {selectedOrder.specialRequests}</p>}
+                                
+                                <h4 className="text-xl font-semibold mt-6 mb-2">Items</h4>
+                                <div className="space-y-2">
+                                    {selectedOrder.items.map((item, index) => (
+                                        <div key={item.id} className="flex items-center justify-between p-2 bg-gray-50 rounded">
+                                            <span>{item.name} (x{item.quantity})</span>
+                                            <select value={item.status} onChange={e => updateItemStatus(selectedOrder.id, index, e.target.value)} className="p-1 border rounded bg-white">
+                                                {ITEM_STATUSES.map(s => <option key={s} value={s}>{s}</option>)}
                                             </select>
                                         </div>
-                                    </div>
-                                    <div>
-                                        <h4 className="font-semibold text-lg mb-2">Requested Items:</h4>
-                                        {selectedOrder.items.length > 0 ? (
-                                            <ul className="space-y-2">
-                                                {selectedOrder.items.map((item, idx) => (
-                                                    <li key={idx} className="flex items-center p-2 bg-gray-50 rounded-md">
-                                                        <img
-                                                            src={item.imageUrl || `https://placehold.co/50x50/e0e0e0/000000?text=No+Img`}
-                                                            alt={item.name}
-                                                            className="w-12 h-12 object-contain rounded-sm mr-3"
-                                                            onError={(e) => { e.target.onerror = null; e.target.src = `https://placehold.co/50x50/e0e0e0/000000?text=Image+Error`; }}
-                                                        />
-                                                        <div className="flex-grow">
-                                                            <p className="font-medium text-gray-800">{item.name} (x{item.quantity})</p>
-                                                            <label htmlFor={`itemStatus-${idx}`} className="sr-only">Status for {item.name}</label>
-                                                            <select
-                                                                id={`itemStatus-${idx}`}
-                                                                value={item.itemStatus || 'Pending'}
-                                                                onChange={(e) => handleUpdateItemStatus(selectedOrder.id, idx, e.target.value)}
-                                                                className="mt-1 w-full p-1 border border-gray-300 rounded-md text-sm focus:ring-blue-500 focus:border-blue-500"
-                                                            >
-                                                                {itemStatusOptions.map(status => (
-                                                                    <option key={status} value={status}>{status}</option>
-                                                                ))}
-                                                            </select>
-                                                        </div>
-                                                    </li>
-                                                ))}
-                                            </ul>
-                                        ) : (
-                                            <p className="text-gray-600 italic">No standard items requested.</p>
-                                        )}
-                                        {selectedOrder.specialRequest && (
-                                            <p className="mt-4 p-3 bg-blue-50 rounded-md text-blue-800 border border-blue-200">
-                                                <span className="font-semibold">Special Request:</span> {selectedOrder.specialRequest}
-                                            </p>
-                                        )}
-                                    </div>
+                                    ))}
                                 </div>
 
-                                <div className="mb-6">
-                                    <h4 className="font-semibold text-lg mb-2">Communication Log:</h4>
-                                    <div className="max-h-40 overflow-y-auto border border-gray-200 rounded-md p-3 bg-gray-50 space-y-2 mb-3">
-                                        {selectedOrder.followUpRequests && selectedOrder.followUpRequests.length > 0 ? (
-                                            selectedOrder.followUpRequests.map((req, idx) => (
-                                                <div key={idx} className={`text-sm bg-white p-2 rounded-md shadow-sm ${req.from === selectedOrder.userId ? 'text-blue-800' : 'text-green-800'}`}>
-                                                    <p className="font-medium">
-                                                        {new Date(req.timestamp).toLocaleString()} - From {req.from === userId ? 'You' : 'Warehouse/Admin'}:
-                                                    </p>
-                                                    <p className="pl-4">{req.message}</p>
-                                                </div>
-                                            ))
-                                        ) : (
-                                            <p className="text-gray-600 italic">No communication yet.</p>
-                                        )}
-                                    </div>
-                                    <textarea
-                                        className="w-full p-2 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500"
-                                        rows="3"
-                                        placeholder="Reply to customer or add an internal note..."
-                                        onKeyPress={(e) => {
-                                            if (e.key === 'Enter' && !e.shiftKey) { // Send on Enter, allow Shift+Enter for newline
-                                                e.preventDefault();
-                                                // Call handleReplyToFollowUp with selectedOrder.id and the textarea value
-                                                handleReplyToFollowUp(selectedOrder.id, e.target.value);
-                                                e.target.value = ''; // Clear after sending
-                                            }
-                                        }}
-                                    ></textarea>
-                                    <button
-                                        onClick={(e) => {
-                                            const textarea = e.target.previousElementSibling;
-                                            handleReplyToFollowUp(selectedOrder.id, textarea.value); // Pass orderId here
-                                            textarea.value = ''; // Clear after sending
-                                        }}
-                                        className="mt-2 px-4 py-2 bg-purple-600 text-white rounded-md hover:bg-purple-700 transition-colors duration-200 text-sm font-medium"
-                                    >
-                                        Send Reply
-                                    </button>
+                                <h4 className="text-xl font-semibold mt-6 mb-2">Communication</h4>
+                                <div className="border rounded-lg p-4 h-48 overflow-y-auto bg-gray-50 mb-4">
+                                    {(selectedOrder.communication || []).length === 0 && <p className="text-gray-500">No messages yet.</p>}
+                                    {(selectedOrder.communication || []).map((msg, i) => (
+                                        <p key={i}><span className="font-semibold">{msg.sender}:</span> {msg.message}</p>
+                                    ))}
                                 </div>
-
-                                <div className="flex justify-end">
-                                    <button
-                                        onClick={() => setSelectedOrder(null)}
-                                        className="px-6 py-2 bg-gray-300 text-gray-800 rounded-md hover:bg-gray-400 transition-colors duration-200 font-semibold"
-                                    >
-                                        Close
-                                    </button>
+                                <div className="flex space-x-2">
+                                    <input type="text" value={newMessage} onChange={e => setNewMessage(e.target.value)} placeholder="Type a reply..." className="flex-grow p-2 border rounded" />
+                                    <button onClick={handleSendMessage} className="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700">Reply</button>
                                 </div>
                             </div>
-                        </div>
-                    )}
+                        ) : (
+                            <div className="flex items-center justify-center h-full">
+                                <p className="text-center text-gray-500 text-xl">Select an order to manage.</p>
+                            </div>
+                        )}
+                    </div>
                 </div>
             );
         };
 
+        // --- Main App Component ---
+        const App = () => {
+            const { user, loading, firebaseInstances } = useAppContext();
+            const [currentPage, setCurrentPage] = useState('inventory');
 
-        {/* Render the App */}
-        window.onload = function() {
-            ReactDOM.render(
-                <React.StrictMode>
-                    <ErrorBoundary>
-                        <AuthProvider>
-                            <App />
-                        </AuthProvider>
-                    </ErrorBoundary>
-                </React.StrictMode>,
-                document.getElementById('root')
+            useEffect(() => {
+                if (user) {
+                    // Default page based on role
+                    if (user.role === 'warehouse') setCurrentPage('order_management');
+                    else if (user.role === 'admin') setCurrentPage('order_management');
+                    else setCurrentPage('inventory');
+                }
+            }, [user]);
+
+            if (loading) {
+                return <LoadingSpinner message="Initializing Connections..." />;
+            }
+
+            if (!firebaseInstances) {
+                return (
+                    <div className="flex items-center justify-center h-screen text-center text-red-500 p-8">
+                        <h1 className="text-2xl font-bold">Fatal Error: Could not connect to databases.</h1>
+                        <p>Please check your Firebase configuration and security rules, then refresh the page.</p>
+                    </div>
+                );
+            }
+            
+            if (!user) {
+                return <LoginPage />;
+            }
+
+            const renderPage = () => {
+                switch (currentPage) {
+                    case 'inventory': return <InventoryPage />;
+                    case 'cart': return <CartPage setCurrentPage={setCurrentPage} />;
+                    case 'order_history': return <OrderHistoryPage />;
+                    case 'order_management': return <OrderManagementPage />;
+                    case 'user_management': return <UserManagementPage />;
+                    default: return <InventoryPage />;
+                }
+            };
+
+            return (
+                <div className="min-h-screen bg-gray-100">
+                    <Header />
+                    <Nav setCurrentPage={setCurrentPage} />
+                    <main>
+                        {renderPage()}
+                    </main>
+                </div>
             );
         };
+
+        const Root = () => (
+            <AppProvider>
+                <Modal />
+                <App />
+            </AppProvider>
+        );
+
+        const container = document.getElementById('root');
+        const root = ReactDOM.createRoot(container);
+        root.render(<Root />);
     </script>
 </body>
 </html>

@@ -139,6 +139,7 @@
             const [loading, setLoading] = useState(true);
             const [modal, setModal] = useState({ isOpen: false, message: '', onConfirm: null });
             const [firebaseInstances, setFirebaseInstances] = useState(null);
+            const [newOrderCount, setNewOrderCount] = useState(0);
             const [users, setUsers] = useState(() => {
                 try {
                     const savedUsers = localStorage.getItem('dlv_users');
@@ -238,7 +239,9 @@
                 firebaseInstances,
                 modal,
                 showModal,
-                closeModal
+                closeModal,
+                newOrderCount,
+                setNewOrderCount
             };
 
             return <AppContext.Provider value={value}>{children}</AppContext.Provider>;
@@ -298,7 +301,7 @@
 
             return (
                 <header className="bg-white shadow-md p-4 flex justify-between items-center">
-                    <h1 className="text-2xl font-bold text-gray-800">DLV Order Hub</h1>
+                    <img src="https://i.imgur.com/pmh9SN0.png" alt="DLV Order Hub Logo" className="h-10" />
                     {user && (
                         <div className="flex items-center space-x-4">
                             <span className="text-gray-600">Welcome, <span className="font-semibold">{user.username}</span> ({user.role})</span>
@@ -312,7 +315,14 @@
         };
         
         const Nav = ({ setCurrentPage }) => {
-            const { user } = useAppContext();
+            const { user, newOrderCount, setNewOrderCount } = useAppContext();
+
+            const handleNavClick = (page) => {
+                if(page === 'order_management') {
+                    setNewOrderCount(0);
+                }
+                setCurrentPage(page);
+            }
 
             if (!user) return null;
 
@@ -321,16 +331,25 @@
                     <ul className="flex space-x-6">
                         {(user.role === 'orderer' || user.role === 'admin') && (
                             <>
-                                <li><button onClick={() => setCurrentPage('inventory')} className="hover:text-blue-300">Inventory</button></li>
-                                <li><button onClick={() => setCurrentPage('cart')} className="hover:text-blue-300">Cart</button></li>
-                                <li><button onClick={() => setCurrentPage('order_history')} className="hover:text-blue-300">Order History</button></li>
+                                <li><button onClick={() => handleNavClick('inventory')} className="hover:text-blue-300">Inventory</button></li>
+                                <li><button onClick={() => handleNavClick('cart')} className="hover:text-blue-300">Cart</button></li>
+                                <li><button onClick={() => handleNavClick('order_history')} className="hover:text-blue-300">Order History</button></li>
                             </>
                         )}
                         {(user.role === 'warehouse' || user.role === 'admin') && (
-                            <li><button onClick={() => setCurrentPage('order_management')} className="hover:text-blue-300">Order Management</button></li>
+                            <li>
+                                <button onClick={() => handleNavClick('order_management')} className="hover:text-blue-300 flex items-center">
+                                    Order Management
+                                    {newOrderCount > 0 && (
+                                        <span className="ml-2 bg-red-500 text-white text-xs font-bold rounded-full h-5 w-5 flex items-center justify-center">
+                                            {newOrderCount}
+                                        </span>
+                                    )}
+                                </button>
+                            </li>
                         )}
                         {user.role === 'admin' && (
-                             <li><button onClick={() => setCurrentPage('user_management')} className="hover:text-blue-300">User Management</button></li>
+                             <li><button onClick={() => handleNavClick('user_management')} className="hover:text-blue-300">User Management</button></li>
                         )}
                     </ul>
                 </nav>
@@ -338,6 +357,20 @@
         };
 
         // --- Page Components ---
+
+        const WelcomePage = ({ onVideoEnd }) => {
+            return (
+                <div className="fixed inset-0 w-screen h-screen bg-black overflow-hidden">
+                    <video 
+                        src="https://i.imgur.com/kvu8x9r.mp4" 
+                        autoPlay 
+                        muted 
+                        onEnded={onVideoEnd}
+                        className="absolute top-0 left-0 w-full h-full object-cover z-0"
+                    ></video>
+                </div>
+            );
+        };
 
         const LoginPage = () => {
             const [username, setUsername] = useState('');
@@ -356,7 +389,10 @@
             return (
                 <div className="flex items-center justify-center min-h-screen bg-gray-100">
                     <div className="p-8 bg-white rounded-lg shadow-xl w-full max-w-md">
-                        <h2 className="text-3xl font-bold mb-6 text-center text-gray-800">DLV Order Hub Login</h2>
+                        <div className="flex justify-center mb-6">
+                            <img src="https://i.imgur.com/pmh9SN0.png" alt="DLV Order Hub Logo" className="h-12" />
+                        </div>
+                        <h2 className="text-2xl font-bold mb-6 text-center text-gray-700">Login</h2>
                         <form onSubmit={handleLogin}>
                             <div className="mb-4">
                                 <label className="block text-gray-700 text-sm font-bold mb-2" htmlFor="username">
@@ -899,7 +935,7 @@
         };
 
         const OrderManagementPage = () => {
-            const { user, firebaseInstances, showModal } = useAppContext();
+            const { user, firebaseInstances, showModal, setNewOrderCount } = useAppContext();
             const [orders, setOrders] = useState([]);
             const [loading, setLoading] = useState(true);
             const [selectedOrder, setSelectedOrder] = useState(null);
@@ -907,6 +943,11 @@
 
             const ITEM_STATUSES = ["Pending", "Picked", "Out of Stock", "Substituted"];
 
+            // Clear notifications when visiting this page
+            useEffect(() => {
+                setNewOrderCount(0);
+            }, []);
+            
             useEffect(() => {
                 if (!firebaseInstances) return;
                 setLoading(true);
@@ -914,10 +955,6 @@
                 const unsubscribe = window.onSnapshot(q, (querySnapshot) => {
                     const ordersData = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })).sort((a, b) => (b.createdAt?.seconds || 0) - (a.createdAt?.seconds || 0));
                     setOrders(ordersData);
-                    if (selectedOrder) {
-                        const updatedSelectedOrder = ordersData.find(o => o.id === selectedOrder.id);
-                        setSelectedOrder(updatedSelectedOrder || null);
-                    }
                     setLoading(false);
                 }, (error) => {
                     console.error("Error fetching orders:", error);
@@ -930,6 +967,16 @@
                 });
                 return () => unsubscribe();
             }, [firebaseInstances]);
+
+            // This effect keeps the selectedOrder state in sync with the main orders list
+            useEffect(() => {
+                if (selectedOrder) {
+                    const updatedSelectedOrder = orders.find(o => o.id === selectedOrder.id);
+                    if (updatedSelectedOrder) {
+                        setSelectedOrder(updatedSelectedOrder);
+                    }
+                }
+            }, [orders]);
             
             const updateOrderStatus = async (orderId, status) => {
                 try {
@@ -945,8 +992,12 @@
                 const orderToUpdate = orders.find(o => o.id === orderId);
                 if (!orderToUpdate) return;
 
-                const updatedItems = [...orderToUpdate.items];
-                updatedItems[itemIndex].status = status;
+                const updatedItems = orderToUpdate.items.map((item, index) => {
+                    if (index === itemIndex) {
+                        return { ...item, status: status };
+                    }
+                    return item;
+                });
                 
                 try {
                     const orderRef = window.doc(firebaseInstances.primaryDb, 'orders', orderId);
@@ -1059,8 +1110,29 @@
 
         // --- Main App Component ---
         const App = () => {
-            const { user, loading, firebaseInstances } = useAppContext();
+            const { user, loading, firebaseInstances, setNewOrderCount } = useAppContext();
             const [currentPage, setCurrentPage] = useState('inventory');
+            const [showWelcome, setShowWelcome] = useState(true);
+            const [appLoadTime] = useState(new Date());
+
+            // Effect to listen for new orders for admin/warehouse users
+            useEffect(() => {
+                if (!user || !firebaseInstances || (user.role !== 'admin' && user.role !== 'warehouse')) {
+                    return;
+                }
+
+                const q = window.query(
+                    window.collection(firebaseInstances.primaryDb, "orders"), 
+                    window.where("createdAt", ">", appLoadTime)
+                );
+
+                const unsubscribe = window.onSnapshot(q, (snapshot) => {
+                    setNewOrderCount(snapshot.size);
+                });
+
+                return () => unsubscribe();
+
+            }, [user, firebaseInstances]);
 
             useEffect(() => {
                 if (user) {
@@ -1073,6 +1145,10 @@
 
             if (loading) {
                 return <LoadingSpinner message="Initializing Connections..." />;
+            }
+            
+            if (showWelcome && !user) { // Only show welcome if not already logged in
+                return <WelcomePage onVideoEnd={() => setShowWelcome(false)} />;
             }
 
             if (!firebaseInstances) {

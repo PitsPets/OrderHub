@@ -15,7 +15,7 @@
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/9.22.0/firebase-app.js";
         window.initializeApp = initializeApp;
-        import { getFirestore, collection, getDocs, doc, setDoc, addDoc, onSnapshot, query, where, updateDoc, writeBatch, serverTimestamp, deleteDoc } from "https://www.gstatic.com/firebasejs/9.22.0/firebase-firestore.js";
+        import { getFirestore, collection, getDocs, doc, setDoc, addDoc, onSnapshot, query, where, updateDoc, writeBatch, serverTimestamp, deleteDoc, runTransaction } from "https://www.gstatic.com/firebasejs/9.22.0/firebase-firestore.js";
         window.getFirestore = getFirestore;
         window.collection = collection;
         window.getDocs = getDocs;
@@ -29,6 +29,7 @@
         window.writeBatch = writeBatch;
         window.serverTimestamp = serverTimestamp;
         window.deleteDoc = deleteDoc;
+        window.runTransaction = runTransaction;
         import { getAuth, signInAnonymously } from "https://www.gstatic.com/firebasejs/9.22.0/firebase-auth.js";
         window.getAuth = getAuth;
         window.signInAnonymously = signInAnonymously;
@@ -92,32 +93,6 @@
             appId: "1:267729758583:web:f5f7ca26afc99c17819972"
         };
         
-        // --- Firebase Security Rules Documentation ---
-        /*
-            For Primary Database ('dlvorders'):
-            rules_version = '2';
-            service cloud.firestore {
-              match /databases/{database}/documents {
-                match /{document=**} {
-                  allow read, write: if request.auth != null;
-                }
-              }
-            }
-
-            For Secondary Database ('dlv-warehouse-tracker'):
-            rules_version = '2';
-            service cloud.firestore {
-              match /databases/{database}/documents {
-                match /{document=**} {
-                  allow write: if false;
-                }
-                match /artifacts/default-app-id/public/data/{collection}/{document=**} {
-                  allow read: if true;
-                }
-              }
-            }
-        */
-
         // --- Context for App State ---
         const AppContext = createContext();
 
@@ -127,6 +102,7 @@
             const [modal, setModal] = useState({ isOpen: false, message: '', onConfirm: null });
             const [firebaseInstances, setFirebaseInstances] = useState(null);
             const [newOrderCount, setNewOrderCount] = useState(0);
+            const [newToolRequestCount, setNewToolRequestCount] = useState(0);
             const [users, setUsers] = useState([]);
 
             useEffect(() => {
@@ -159,9 +135,9 @@
                     setUsers(usersData);
                     if (snapshot.empty) {
                         const defaultUsers = [
-                            { username: 'Admin', pin: '1234', role: 'admin' },
-                            { username: 'Warehouse', pin: '5678', role: 'warehouse' },
-                            { username: 'John', pin: '1111', role: 'orderer' },
+                            { username: 'ADMIN', pin: '1234', role: 'admin' },
+                            { username: 'WAREHOUSE', pin: '5678', role: 'warehouse' },
+                            { username: 'JOHN', pin: '1111', role: 'orderer' },
                         ];
                         const batch = window.writeBatch(firebaseInstances.primaryDb);
                         defaultUsers.forEach(user => {
@@ -181,7 +157,7 @@
                 const foundUser = users.find(u => u.username.toLowerCase() === username.toLowerCase() && u.pin === pin);
                 if (foundUser) {
                     setUser(foundUser);
-                    sessionStorage.setItem('dlv_user', JSON.stringify(foundUser));
+                    localStorage.setItem('dlv_user', JSON.stringify(foundUser));
                     return true;
                 }
                 setModal({ isOpen: true, message: 'Invalid username or PIN.' });
@@ -190,13 +166,13 @@
 
             const logout = () => {
                 setUser(null);
-                sessionStorage.removeItem('dlv_user');
-                sessionStorage.removeItem('dlv_cart');
+                localStorage.removeItem('dlv_user');
+                localStorage.removeItem('dlv_cart');
             };
             
             useEffect(() => {
                 try {
-                    const savedUserJSON = sessionStorage.getItem('dlv_user');
+                    const savedUserJSON = localStorage.getItem('dlv_user');
                     if (savedUserJSON) {
                         const savedUser = JSON.parse(savedUserJSON);
                         const currentUserInDb = users.find(u => u.id === savedUser.id);
@@ -208,7 +184,7 @@
             const showModal = (message, onConfirm = null) => setModal({ isOpen: true, message, onConfirm });
             const closeModal = () => setModal({ isOpen: false, message: '', onConfirm: null });
 
-            const value = { user, users, login, logout, loading, firebaseInstances, modal, showModal, closeModal, newOrderCount, setNewOrderCount };
+            const value = { user, users, login, logout, loading, firebaseInstances, modal, showModal, closeModal, newOrderCount, setNewOrderCount, newToolRequestCount, setNewToolRequestCount };
             return <AppContext.Provider value={value}>{children}</AppContext.Provider>;
         };
 
@@ -259,9 +235,10 @@
         };
         
         const Nav = ({ setCurrentPage }) => {
-            const { user, newOrderCount, setNewOrderCount } = useAppContext();
+            const { user, newOrderCount, setNewOrderCount, newToolRequestCount, setNewToolRequestCount } = useAppContext();
             const handleNavClick = (page) => {
                 if(page === 'order_management') setNewOrderCount(0);
+                if(page === 'tool_requests') setNewToolRequestCount(0);
                 setCurrentPage(page);
             }
             if (!user) return null;
@@ -273,16 +250,25 @@
                                 <li><button onClick={() => handleNavClick('inventory')} className="hover:text-blue-300">Inventory</button></li>
                                 <li><button onClick={() => handleNavClick('cart')} className="hover:text-blue-300">Cart</button></li>
                                 <li><button onClick={() => handleNavClick('order_history')} className="hover:text-blue-300">Order History</button></li>
-                                <li><button onClick={() => handleNavClick('tools')} className="hover:text-blue-300">Tools</button></li>
+                                <li><button onClick={() => handleNavClick('tools')} className="hover:text-blue-300">Tools Library</button></li>
+                                <li><button onClick={() => handleNavClick('my_tool_requests')} className="hover:text-blue-300">My Tool Requests</button></li>
                             </>
                         )}
                         {(user.role === 'warehouse' || user.role === 'admin') && (
-                            <li>
-                                <button onClick={() => handleNavClick('order_management')} className="hover:text-blue-300 flex items-center">
-                                    Order Management
-                                    {newOrderCount > 0 && <span className="ml-2 bg-red-500 text-white text-xs font-bold rounded-full h-5 w-5 flex items-center justify-center">{newOrderCount}</span>}
-                                </button>
-                            </li>
+                            <>
+                                <li>
+                                    <button onClick={() => handleNavClick('order_management')} className="hover:text-blue-300 flex items-center">
+                                        Order Management
+                                        {newOrderCount > 0 && <span className="ml-2 bg-red-500 text-white text-xs rounded-full h-5 w-5 flex items-center justify-center">{newOrderCount}</span>}
+                                    </button>
+                                </li>
+                                <li>
+                                    <button onClick={() => handleNavClick('tool_requests')} className="hover:text-blue-300 flex items-center">
+                                        Tool Requests
+                                        {newToolRequestCount > 0 && <span className="ml-2 bg-red-500 text-white text-xs rounded-full h-5 w-5 flex items-center justify-center">{newToolRequestCount}</span>}
+                                    </button>
+                                </li>
+                            </>
                         )}
                         {user.role === 'admin' && (
                              <>
@@ -292,6 +278,40 @@
                         )}
                     </ul>
                 </nav>
+            );
+        };
+
+        const WelcomePage = ({ onVideoEnd }) => {
+            const videoRef = useRef(null);
+            const [videoStarted, setVideoStarted] = useState(false);
+
+            const handlePlay = () => {
+                if (videoRef.current) {
+                    videoRef.current.play();
+                    setVideoStarted(true);
+                }
+            };
+
+            return (
+                <div className="fixed inset-0 w-screen h-screen bg-black overflow-hidden cursor-pointer" onClick={onVideoEnd}>
+                    <video 
+                        ref={videoRef}
+                        src="https://i.imgur.com/ys1F2xc.mp4" 
+                        muted 
+                        onEnded={onVideoEnd}
+                        className="absolute top-0 left-0 w-full h-full object-cover z-0"
+                    ></video>
+                    {!videoStarted && (
+                        <div className="absolute inset-0 bg-black bg-opacity-50 flex items-center justify-center z-10">
+                            <button 
+                                onClick={(e) => { e.stopPropagation(); handlePlay(); }}
+                                className="bg-white text-black font-bold py-4 px-8 rounded-full text-2xl hover:bg-gray-200 transition-colors"
+                            >
+                                Click to Begin
+                            </button>
+                        </div>
+                    )}
+                </div>
             );
         };
 
@@ -315,7 +335,7 @@
                         <form onSubmit={handleLogin}>
                             <div className="mb-4">
                                 <label className="block text-gray-700 text-sm font-bold mb-2" htmlFor="username">Username</label>
-                                <input id="username" type="text" value={username} onChange={(e) => setUsername(e.target.value)} className="shadow appearance-none border rounded w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:shadow-outline" required />
+                                <input id="username" type="text" value={username} onChange={(e) => setUsername(e.target.value.toUpperCase())} className="shadow appearance-none border rounded w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:shadow-outline uppercase" required />
                             </div>
                             <div className="mb-6">
                                 <label className="block text-gray-700 text-sm font-bold mb-2" htmlFor="pin">4-Digit PIN</label>
@@ -339,7 +359,7 @@
             const [customImages, setCustomImages] = useState({});
             const [cart, setCart] = useState(() => {
                 try {
-                    const savedCart = sessionStorage.getItem('dlv_cart');
+                    const savedCart = localStorage.getItem('dlv_cart');
                     return savedCart ? JSON.parse(savedCart) : {};
                 } catch { return {}; }
             });
@@ -352,7 +372,9 @@
                         const inventoryCol = window.collection(firebaseInstances.secondaryDb, '/artifacts/default-app-id/public/data/inventory');
                         const inventorySnapshot = await window.getDocs(inventoryCol);
                         const inventoryList = inventorySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+                        
                         setInventory(inventoryList);
+
                         const imagesCol = window.collection(firebaseInstances.primaryDb, '/public/data/inventory_overrides');
                         const imagesSnapshot = await window.getDocs(imagesCol);
                         const imageMap = {};
@@ -369,7 +391,7 @@
             }, [firebaseInstances]);
 
             useEffect(() => {
-                sessionStorage.setItem('dlv_cart', JSON.stringify(cart));
+                localStorage.setItem('dlv_cart', JSON.stringify(cart));
             }, [cart]);
 
             const handleAddToCart = (item, quantity) => {
@@ -406,7 +428,7 @@
             return (
                 <div className="p-4 sm:p-8">
                     <h2 className="text-3xl font-bold mb-6">Inventory</h2>
-                    <input type="text" placeholder="Search inventory..." className="w-full p-3 mb-6 border rounded-lg shadow-sm" value={searchTerm} onChange={e => setSearchTerm(e.target.value)} />
+                    <input type="text" placeholder="Search inventory..." className="w-full p-3 mb-6 border rounded-lg shadow-sm uppercase" value={searchTerm} onChange={e => setSearchTerm(e.target.value.toUpperCase())} />
                     <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-6">
                         {filteredInventory.map((item, index) => (
                             <div key={item.id} className="bg-white rounded-lg shadow-lg overflow-hidden flex flex-col">
@@ -414,7 +436,7 @@
                                 <div className="p-4 flex flex-col flex-grow">
                                     <h3 className="text-xl font-bold">{item.name}</h3>
                                     <p className="text-gray-600 mt-2 flex-grow">{item.description}</p>
-                                    <div className="mt-4">
+                                    <div className="mt-auto pt-4">
                                         <form onSubmit={(e) => {
                                             e.preventDefault();
                                             const quantity = parseInt(e.target.elements.quantity.value);
@@ -438,7 +460,7 @@
             const { user, firebaseInstances, showModal } = useAppContext();
             const [cart, setCart] = useState(() => {
                 try {
-                    const savedCart = sessionStorage.getItem('dlv_cart');
+                    const savedCart = localStorage.getItem('dlv_cart');
                     return savedCart ? JSON.parse(savedCart) : {};
                 } catch { return {}; }
             });
@@ -469,14 +491,14 @@
                 const newCart = { ...cart };
                 newCart[itemId].quantity = newQuantity;
                 setCart(newCart);
-                sessionStorage.setItem('dlv_cart', JSON.stringify(newCart));
+                localStorage.setItem('dlv_cart', JSON.stringify(newCart));
             };
 
             const removeItem = (itemId) => {
                 const newCart = { ...cart };
                 delete newCart[itemId];
                 setCart(newCart);
-                sessionStorage.setItem('dlv_cart', JSON.stringify(newCart));
+                localStorage.setItem('dlv_cart', JSON.stringify(newCart));
             };
 
             const handlePlaceOrder = async () => {
@@ -496,12 +518,13 @@
                         siteName: sites.find(s => s.id === selectedSite)?.name || 'Unknown Site',
                         specialRequests, status: 'Pending', createdAt: window.serverTimestamp(),
                         items: Object.values(cart).map(item => ({ id: item.id, name: item.name, quantity: item.quantity, status: 'Pending' })),
-                        communication: []
+                        communication: [],
+                        isNew: true
                     };
                     const ordersCol = window.collection(firebaseInstances.primaryDb, 'orders');
                     await window.addDoc(ordersCol, orderData);
                     setCart({});
-                    sessionStorage.removeItem('dlv_cart');
+                    localStorage.removeItem('dlv_cart');
                     showModal("Order placed successfully!", () => {
                         setCurrentPage('order_history');
                     });
@@ -542,7 +565,7 @@
                                 </div>
                                 <div className="mb-4">
                                     <label className="block text-gray-700 font-bold mb-2">Special Requests</label>
-                                    <textarea value={specialRequests} onChange={e => setSpecialRequests(e.target.value)} className="w-full p-2 border rounded" rows="3"></textarea>
+                                    <textarea value={specialRequests} onChange={e => setSpecialRequests(e.target.value.toUpperCase())} className="w-full p-2 border rounded uppercase" rows="3"></textarea>
                                 </div>
                                 <button onClick={handlePlaceOrder} disabled={isPlacingOrder} className="w-full bg-green-600 text-white p-3 rounded-lg font-bold hover:bg-green-700 disabled:bg-gray-400">
                                     {isPlacingOrder ? 'Placing Order...' : 'Place Order'}
@@ -616,7 +639,10 @@
                         {selectedOrder ? (
                             <div>
                                 <h3 className="text-2xl font-bold mb-4">Order Details</h3>
-                                <p><span className="font-semibold">Status:</span> {selectedOrder.status}</p>
+                                <div className="mb-6 p-4 border rounded-lg bg-gray-50">
+                                    <label className="block font-semibold mb-3 text-gray-700">Order Progress</label>
+                                    <OrderStatusChecklist currentStatus={selectedOrder.status} />
+                                </div>
                                 <p><span className="font-semibold">Site:</span> {selectedOrder.siteName}</p>
                                 <p><span className="font-semibold">Special Requests:</span> {selectedOrder.specialRequests || 'None'}</p>
                                 
@@ -635,7 +661,7 @@
                                     ))}
                                 </div>
                                 <div className="flex space-x-2">
-                                    <input type="text" value={newMessage} onChange={e => setNewMessage(e.target.value)} placeholder="Type a follow-up message..." className="flex-grow p-2 border rounded" />
+                                    <input type="text" value={newMessage} onChange={e => setNewMessage(e.target.value.toUpperCase())} placeholder="Type a follow-up message..." className="flex-grow p-2 border rounded uppercase" />
                                     <button onClick={handleSendMessage} className="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700">Send</button>
                                 </div>
                             </div>
@@ -650,6 +676,7 @@
         const OrderStatusChecklist = ({ currentStatus, onStatusUpdate }) => {
             const statuses = ["Processing", "Awaiting Pickup", "In Transit", "Delivered"];
             const currentIndex = statuses.indexOf(currentStatus);
+            const colors = ['bg-red-500', 'bg-yellow-500', 'bg-blue-500', 'bg-green-500'];
 
             return (
                 <div className="w-full">
@@ -658,13 +685,13 @@
                             const isCompleted = index < currentIndex;
                             const isCurrent = index === currentIndex;
                             
-                            const nodeColor = isCompleted || isCurrent ? 'bg-blue-600' : 'bg-gray-300';
-                            const textColor = isCompleted || isCurrent ? 'text-blue-600' : 'text-gray-500';
-                            const lineColor = isCompleted ? 'bg-blue-600' : 'bg-gray-300';
+                            const nodeColor = isCompleted || isCurrent ? colors[index] : 'bg-gray-300';
+                            const textColor = isCompleted || isCurrent ? 'text-gray-800' : 'text-gray-500';
+                            const lineColor = isCompleted ? colors[index] : 'bg-gray-300';
 
                             return (
                                 <React.Fragment key={status}>
-                                    <div className="flex flex-col items-center cursor-pointer" onClick={() => onStatusUpdate(status)}>
+                                    <div className="flex flex-col items-center cursor-pointer" onClick={() => onStatusUpdate && onStatusUpdate(status)}>
                                         <div className={`w-6 h-6 rounded-full ${nodeColor} flex items-center justify-center`}>
                                             {isCompleted && <span className="text-white font-bold text-sm">✓</span>}
                                         </div>
@@ -687,6 +714,7 @@
             const [loading, setLoading] = useState(true);
             const [selectedOrder, setSelectedOrder] = useState(null);
             const [newMessage, setNewMessage] = useState("");
+            const [viewArchived, setViewArchived] = useState(false);
 
             const ITEM_STATUSES = ["Pending", "Picked", "Out of Stock", "Substituted"];
 
@@ -705,10 +733,10 @@
                 }, (error) => {
                     console.error("Error fetching orders:", error);
                      if (error.code === 'permission-denied') {
-                         showModal("Could not load orders due to a permissions issue. Please check the security rules in your Firebase project.");
-                    } else {
-                        showModal("Failed to load orders.");
-                    }
+                          showModal("Could not load orders due to a permissions issue. Please check the security rules in your Firebase project.");
+                     } else {
+                         showModal("Failed to load orders.");
+                     }
                     setLoading(false);
                 });
                 return () => unsubscribe();
@@ -769,22 +797,87 @@
                 }
             };
 
+            const handleSelectOrder = async (order) => {
+                setSelectedOrder(order);
+                if (order.isNew) {
+                    try {
+                        const orderRef = window.doc(firebaseInstances.primaryDb, 'orders', order.id);
+                        await window.updateDoc(orderRef, { isNew: false });
+                    } catch (error) {
+                        console.error("Error marking order as seen:", error);
+                    }
+                }
+            };
+            
+            const handleArchiveOrder = async (orderId) => {
+                 try {
+                    const orderRef = window.doc(firebaseInstances.primaryDb, 'orders', orderId);
+                    await window.updateDoc(orderRef, { archived: true });
+                    setSelectedOrder(null);
+                    showModal("Order archived successfully.");
+                } catch (error) {
+                    console.error("Error archiving order:", error);
+                    showModal("Failed to archive order.");
+                }
+            }
+
+            const getOrderStatusColorClass = (status) => {
+                switch (status) {
+                    case 'Pending':
+                        return 'bg-red-100 border-red-300 hover:bg-red-200';
+                    case 'Processing':
+                    case 'Waiting for Supplier':
+                        return 'bg-orange-100 border-orange-300 hover:bg-orange-200';
+                    case 'Awaiting Pickup':
+                        return 'bg-yellow-200 border-yellow-400 hover:bg-yellow-300';
+                    case 'In Transit':
+                        return 'bg-yellow-100 border-yellow-300 hover:bg-yellow-200';
+                    case 'Delivered':
+                        return 'bg-green-100 border-green-300 hover:bg-green-200';
+                    case 'Cancelled':
+                        return 'bg-slate-200 border-slate-400 text-gray-500';
+                    default:
+                        return 'bg-white hover:bg-gray-50';
+                }
+            };
+
             if (loading) return <LoadingSpinner message="Loading All Orders..." />;
+
+            const filteredOrders = orders.filter(order => viewArchived ? order.archived : !order.archived);
 
             return (
                  <div className="p-4 sm:p-8 grid grid-cols-1 md:grid-cols-3 gap-8">
                     <div className="md:col-span-1">
-                        <h2 className="text-3xl font-bold mb-6">All Orders</h2>
+                        <div className="flex justify-between items-center mb-6">
+                            <h2 className="text-3xl font-bold">All Orders</h2>
+                            <div className="flex items-center space-x-2">
+                                <span className="text-sm">{viewArchived ? 'Archived' : 'Active'}</span>
+                                <button onClick={() => setViewArchived(!viewArchived)} className="bg-gray-200 p-1 rounded-full w-12">
+                                    <span className={`block w-5 h-5 rounded-full transition-transform ${viewArchived ? 'translate-x-5' : ''} bg-blue-600`}></span>
+                                </button>
+                            </div>
+                        </div>
                         <div className="bg-white p-4 rounded-lg shadow-md space-y-3 max-h-[80vh] overflow-y-auto">
-                            {orders.length === 0 && <p>No orders found.</p>}
-                            {orders.map(order => (
-                                <div key={order.id} onClick={() => setSelectedOrder(order)} className={`p-4 border rounded-lg cursor-pointer ${selectedOrder?.id === order.id ? 'bg-blue-100 border-blue-500' : 'hover:bg-gray-50'}`}>
-                                    <p className="font-semibold">Order #{order.id.substring(0, 6)}... ({order.username})</p>
-                                    <p>Site: {order.siteName}</p>
-                                    <p>Status: <span className="font-medium">{order.status}</span></p>
-                                    <p className="text-sm text-gray-500">{order.createdAt?.toDate().toLocaleString()}</p>
-                                </div>
-                            ))}
+                            {filteredOrders.length === 0 && <p>No {viewArchived ? 'archived' : 'active'} orders found.</p>}
+                            {filteredOrders.map(order => {
+                                const statusColorClass = getOrderStatusColorClass(order.status);
+                                const isSelected = selectedOrder?.id === order.id;
+                                const isNewClass = order.isNew && !isSelected ? 'border-4 border-yellow-400' : 'border';
+
+                                return (
+                                    <div 
+                                        key={order.id} 
+                                        onClick={() => handleSelectOrder(order)} 
+                                        className={`p-4 rounded-lg cursor-pointer relative transition-colors ${isNewClass} ${isSelected ? 'border-4 border-blue-600 bg-blue-100' : statusColorClass}`}
+                                    >
+                                        {order.isNew && !isSelected && <span className="absolute -top-2 -right-2 text-xs font-bold bg-yellow-400 text-yellow-900 px-2 py-1 rounded-full animate-pulse">NEW</span>}
+                                        <p className="font-semibold">Order #{order.id.substring(0, 6)}... ({order.username})</p>
+                                        <p>Site: {order.siteName}</p>
+                                        <p>Status: <span className="font-medium">{order.status}</span></p>
+                                        <p className="text-sm text-gray-500">{order.createdAt?.toDate().toLocaleString()}</p>
+                                    </div>
+                                );
+                            })}
                         </div>
                     </div>
                     <div className="md:col-span-2 bg-white p-6 rounded-lg shadow-md">
@@ -839,9 +932,12 @@
                                     ))}
                                 </div>
                                 <div className="flex space-x-2">
-                                    <input type="text" value={newMessage} onChange={e => setNewMessage(e.target.value)} placeholder="Type a reply..." className="flex-grow p-2 border rounded" />
+                                    <input type="text" value={newMessage} onChange={e => setNewMessage(e.target.value.toUpperCase())} placeholder="Type a reply..." className="flex-grow p-2 border rounded uppercase" />
                                     <button onClick={handleSendMessage} className="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700">Reply</button>
                                 </div>
+                                {(selectedOrder.status === 'Delivered' || selectedOrder.status === 'Cancelled') && (
+                                    <button onClick={() => handleArchiveOrder(selectedOrder.id)} className="w-full mt-4 bg-gray-600 text-white p-3 rounded-lg font-bold hover:bg-gray-700">Archive Order</button>
+                                )}
                             </div>
                         ) : (
                             <div className="flex items-center justify-center h-full">
@@ -872,7 +968,7 @@
 
                 try {
                     const usersCol = window.collection(firebaseInstances.primaryDb, '/public/data/users');
-                    await window.addDoc(usersCol, newUser);
+                    await window.addDoc(usersCol, { ...newUser, username: newUser.username.toUpperCase() });
                     setNewUser({ username: '', pin: '', role: 'orderer' });
                     showModal("User added successfully!");
                 } catch (error) {
@@ -922,7 +1018,7 @@
                     <div className="bg-white p-6 rounded-lg shadow-md mb-8">
                         <h3 className="text-xl font-semibold mb-4">Add New User</h3>
                         <form onSubmit={handleAddUser} className="grid grid-cols-1 md:grid-cols-4 gap-4 items-end">
-                            <input type="text" placeholder="Username" value={newUser.username} onChange={e => setNewUser({...newUser, username: e.target.value})} className="p-2 border rounded" />
+                            <input type="text" placeholder="Username" value={newUser.username} onChange={e => setNewUser({...newUser, username: e.target.value.toUpperCase()})} className="p-2 border rounded uppercase" />
                             <input type="text" placeholder="4-Digit PIN" value={newUser.pin} maxLength="4" onChange={e => setNewUser({...newUser, pin: e.target.value.replace(/\D/,'')})} className="p-2 border rounded" />
                             <select value={newUser.role} onChange={e => setNewUser({...newUser, role: e.target.value})} className="p-2 border rounded bg-white">
                                 <option value="orderer">Orderer</option>
@@ -972,16 +1068,70 @@
             );
         };
         
+        const RequestToolModal = ({ tool, sites, onConfirm, onCancel }) => {
+            const [selectedSite, setSelectedSite] = useState('');
+
+            useEffect(() => {
+                if (sites.length > 0) {
+                    setSelectedSite(sites[0].id);
+                }
+            }, [sites]);
+
+            const handleConfirm = () => {
+                if (!selectedSite) {
+                    alert("Please select a project site.");
+                    return;
+                }
+                const site = sites.find(s => s.id === selectedSite);
+                onConfirm(tool, site);
+            };
+
+            return (
+                <div className="modal-overlay">
+                    <div className="modal-content">
+                        <h3 className="text-2xl font-bold mb-4">Request Tool</h3>
+                        <p className="mb-2"><span className="font-semibold">Tool:</span> {tool.name}</p>
+                        <p className="mb-4"><span className="font-semibold">Asset Tag:</span> {tool.assetTag}</p>
+                        
+                        <div className="mb-6">
+                            <label htmlFor="site-select-modal" className="block text-gray-700 font-bold mb-2">Select Project Site</label>
+                            <select 
+                                id="site-select-modal" 
+                                value={selectedSite} 
+                                onChange={e => setSelectedSite(e.target.value)} 
+                                className="w-full p-2 border rounded bg-white"
+                            >
+                                {sites.length === 0 ? (
+                                    <option disabled>Loading sites...</option>
+                                ) : (
+                                    sites.map(site => <option key={site.id} value={site.id}>{site.name}</option>)
+                                )}
+                            </select>
+                        </div>
+                        
+                        <div className="flex justify-end space-x-4">
+                            <button onClick={onCancel} className="px-6 py-2 rounded-md bg-gray-200 text-gray-800 hover:bg-gray-300">Cancel</button>
+                            <button onClick={handleConfirm} className="px-6 py-2 rounded-md bg-blue-600 text-white hover:bg-blue-700">Confirm Request</button>
+                        </div>
+                    </div>
+                </div>
+            );
+        };
+
         const ToolsPage = () => {
             const { user, firebaseInstances, showModal } = useAppContext();
             const [tools, setTools] = useState([]);
             const [sites, setSites] = useState([]);
             const [loading, setLoading] = useState(true);
+            const [toolToRequest, setToolToRequest] = useState(null);
+            const [searchTerm, setSearchTerm] = useState("");
 
             useEffect(() => {
                 if (!firebaseInstances) return;
+                
                 const toolsCol = window.collection(firebaseInstances.primaryDb, '/public/data/tools');
-                const unsubscribe = window.onSnapshot(toolsCol, (snapshot) => {
+                
+                const unsubscribe = onSnapshot(toolsCol, (snapshot) => {
                     const toolsData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
                     setTools(toolsData);
                     setLoading(false);
@@ -1005,72 +1155,181 @@
                 return () => unsubscribe();
             }, [firebaseInstances]);
 
-            const handleBorrow = async (toolId) => {
-                if (sites.length === 0) {
-                    showModal("Project sites are not loaded yet. Please try again in a moment.");
-                    return;
-                }
-                const siteId = prompt("Enter the Project Site ID for this tool:", sites[0]?.id || "");
-                if (siteId) {
-                    const site = sites.find(s => s.id === siteId);
-                    if (!site) {
-                        showModal("Invalid Site ID.");
-                        return;
-                    }
-                    try {
-                        const toolRef = window.doc(firebaseInstances.primaryDb, '/public/data/tools', toolId);
-                        await window.updateDoc(toolRef, {
-                            status: 'Hiram',
-                            borrowedBy: user.username,
-                            siteName: site.name,
-                            borrowedDate: window.serverTimestamp()
+            const handleRequestConfirm = async (tool, site) => {
+                const toolRef = window.doc(firebaseInstances.primaryDb, '/public/data/tools', tool.id);
+                try {
+                    await window.runTransaction(firebaseInstances.primaryDb, async (transaction) => {
+                        const toolDoc = await transaction.get(toolRef);
+                        if (!toolDoc.exists()) throw new Error("Tool does not exist!");
+                        if (toolDoc.data().status !== 'Available') throw new Error("Tool is no longer available for request.");
+                        
+                        transaction.update(toolRef, {
+                            status: 'Pending Approval',
+                            requestedBy: user.username,
+                            requestedById: user.id,
+                            locationId: site.id,
+                            locationName: site.name,
+                            requestedDate: window.serverTimestamp()
                         });
-                        showModal("Tool borrowed successfully!");
-                    } catch (error) {
-                        console.error("Error borrowing tool:", error);
-                        showModal("Failed to borrow tool.");
-                    }
+                    });
+                    showModal(`Request for "${tool.name} (${tool.assetTag})" submitted successfully!`);
+                } catch (error) {
+                    console.error("Error requesting tool:", error);
+                    showModal(`Could not request tool. Reason: ${error.message}`);
+                } finally {
+                    setToolToRequest(null);
                 }
             };
+            
+            const getStatusClass = (status) => {
+                switch (status) {
+                    case 'Available': return 'bg-green-100 text-green-800';
+                    case 'Pending Approval': return 'bg-yellow-100 text-yellow-800';
+                    case 'Approved': return 'bg-blue-100 text-blue-800';
+                    case 'Borrowed': return 'bg-purple-100 text-purple-800';
+                    case 'Denied': return 'bg-red-100 text-red-800';
+                    default: return 'bg-gray-100 text-gray-800';
+                }
+            };
+
+            const filteredTools = tools
+                .filter(tool => tool.condition === 'Good' && tool.status === 'Available')
+                .filter(tool =>
+                    tool.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+                    (tool.assetTag && tool.assetTag.toLowerCase().includes(searchTerm.toLowerCase()))
+                );
 
             if (loading) return <LoadingSpinner message="Loading Tools..." />;
 
             return (
-                <div className="p-4 sm:p-8">
-                    <h2 className="text-3xl font-bold mb-6">Tools Library</h2>
-                    <div className="bg-white p-6 rounded-lg shadow-md">
-                        <div className="overflow-x-auto">
-                            <table className="min-w-full">
-                                <thead className="bg-gray-200">
-                                    <tr>
-                                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Tool Name</th>
-                                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
-                                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Borrowed By</th>
-                                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Current Site</th>
-                                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Action</th>
-                                    </tr>
-                                </thead>
-                                <tbody className="bg-white divide-y divide-gray-200">
-                                    {tools.map(tool => (
-                                        <tr key={tool.id}>
-                                            <td className="px-6 py-4 whitespace-nowrap font-medium">{tool.name}</td>
-                                            <td className="px-6 py-4 whitespace-nowrap">
-                                                <span className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${tool.status === 'Available' ? 'bg-green-100 text-green-800' : 'bg-yellow-100 text-yellow-800'}`}>
-                                                    {tool.status}
-                                                </span>
-                                            </td>
-                                            <td className="px-6 py-4 whitespace-nowrap">{tool.borrowedBy || 'N/A'}</td>
-                                            <td className="px-6 py-4 whitespace-nowrap">{tool.siteName || tool.homeSiteName || 'N/A'}</td>
-                                            <td className="px-6 py-4 whitespace-nowrap">
-                                                {tool.status === 'Available' && (
-                                                    <button onClick={() => handleBorrow(tool.id)} className="bg-blue-500 text-white px-3 py-1 rounded hover:bg-blue-600">Hiramin</button>
-                                                )}
-                                            </td>
+                <>
+                    {toolToRequest && (
+                        <RequestToolModal 
+                            tool={toolToRequest}
+                            sites={sites}
+                            onConfirm={handleRequestConfirm}
+                            onCancel={() => setToolToRequest(null)}
+                        />
+                    )}
+                    <div className="p-4 sm:p-8">
+                        <h2 className="text-3xl font-bold mb-6">Tools Library</h2>
+                        <input 
+                            type="text" 
+                            placeholder="Search by tool name or asset tag..." 
+                            className="w-full p-3 mb-6 border rounded-lg shadow-sm uppercase" 
+                            value={searchTerm} 
+                            onChange={e => setSearchTerm(e.target.value.toUpperCase())} 
+                        />
+                        <div className="bg-white p-6 rounded-lg shadow-md">
+                            <div className="overflow-x-auto">
+                                <table className="min-w-full">
+                                    <thead className="bg-gray-200">
+                                        <tr>
+                                            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Tool Name</th>
+                                            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Asset Tag</th>
+                                            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
+                                            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Location</th>
+                                            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Action</th>
                                         </tr>
-                                    ))}
-                                </tbody>
-                            </table>
+                                    </thead>
+                                    <tbody className="bg-white divide-y divide-gray-200">
+                                        {filteredTools.map(tool => (
+                                            <tr key={tool.id}>
+                                                <td className="px-6 py-4 whitespace-nowrap font-medium">{tool.name}</td>
+                                                <td className="px-6 py-4 whitespace-nowrap font-semibold">{tool.assetTag}</td>
+                                                <td className="px-6 py-4 whitespace-nowrap">
+                                                    <span className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${getStatusClass(tool.status)}`}>
+                                                        {tool.status}
+                                                    </span>
+                                                </td>
+                                                <td className="px-6 py-4 whitespace-nowrap">{tool.locationName || 'N/A'}</td>
+                                                <td className="px-6 py-4 whitespace-nowrap">
+                                                    <button onClick={() => setToolToRequest(tool)} className="bg-blue-500 text-white px-3 py-1 rounded hover:bg-blue-600">Request Borrow</button>
+                                                </td>
+                                            </tr>
+                                        ))}
+                                    </tbody>
+                                </table>
+                            </div>
                         </div>
+                    </div>
+                </>
+            );
+        };
+
+        const MyToolRequestsPage = () => {
+            const { user, firebaseInstances, showModal } = useAppContext();
+            const [myRequests, setMyRequests] = useState([]);
+            const [loading, setLoading] = useState(true);
+
+            useEffect(() => {
+                if (!firebaseInstances || !user) return;
+                const toolsCol = window.collection(firebaseInstances.primaryDb, '/public/data/tools');
+                const q = window.query(toolsCol, where("requestedById", "==", user.id));
+
+                const unsubscribe = onSnapshot(q, (snapshot) => {
+                    const requestsData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }))
+                        .sort((a, b) => (b.requestedDate?.seconds || 0) - (a.requestedDate?.seconds || 0));
+                    setMyRequests(requestsData);
+                    setLoading(false);
+                }, (error) => {
+                    console.error("Error fetching my tool requests:", error);
+                    showModal("Failed to load your tool requests.");
+                    setLoading(false);
+                });
+
+                return () => unsubscribe();
+            }, [firebaseInstances, user]);
+            
+            const getStatusClass = (status) => {
+                switch (status) {
+                    case 'Available': return 'bg-green-100 text-green-800';
+                    case 'Pending Approval': return 'bg-yellow-100 text-yellow-800';
+                    case 'Approved': return 'bg-blue-100 text-blue-800';
+                    case 'Borrowed': return 'bg-purple-100 text-purple-800';
+                    case 'Denied': return 'bg-red-100 text-red-800';
+                    default: return 'bg-gray-100 text-gray-800';
+                }
+            };
+
+            if (loading) return <LoadingSpinner message="Loading Your Tool Requests..." />;
+
+            return (
+                <div className="p-4 sm:p-8">
+                    <h2 className="text-3xl font-bold mb-6">My Tool Requests</h2>
+                    <div className="bg-white p-6 rounded-lg shadow-md">
+                        {myRequests.length === 0 ? (
+                            <p className="text-center text-gray-500">You have not requested any tools.</p>
+                        ) : (
+                            <div className="overflow-x-auto">
+                                <table className="min-w-full">
+                                    <thead className="bg-gray-200">
+                                        <tr>
+                                            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Tool Name</th>
+                                            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Asset Tag</th>
+                                            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Requested For Site</th>
+                                            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Date Requested</th>
+                                            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Request Status</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody className="bg-white divide-y divide-gray-200">
+                                        {myRequests.map(req => (
+                                            <tr key={req.id}>
+                                                <td className="px-6 py-4 whitespace-nowrap font-medium">{req.name}</td>
+                                                <td className="px-6 py-4 whitespace-nowrap font-semibold">{req.assetTag}</td>
+                                                <td className="px-6 py-4 whitespace-nowrap">{req.locationName}</td>
+                                                <td className="px-6 py-4 whitespace-nowrap">{req.requestedDate?.toDate().toLocaleString()}</td>
+                                                <td className="px-6 py-4 whitespace-nowrap">
+                                                    <span className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${getStatusClass(req.status)}`}>
+                                                        {req.status}
+                                                    </span>
+                                                </td>
+                                            </tr>
+                                        ))}
+                                    </tbody>
+                                </table>
+                            </div>
+                        )}
                     </div>
                 </div>
             );
@@ -1081,8 +1340,12 @@
             const [tools, setTools] = useState([]);
             const [sites, setSites] = useState([]);
             const [loading, setLoading] = useState(true);
-            const [newToolData, setNewToolData] = useState({ name: '', siteId: '' });
+            const [newToolData, setNewToolData] = useState({ name: '', locationId: '' });
             const [editingTool, setEditingTool] = useState(null);
+            const [searchTerm, setSearchTerm] = useState("");
+            const [activeTab, setActiveTab] = useState('dashboard');
+
+            const TOOL_CONDITIONS = ["Good", "Needs Repair", "Under Maintenance", "For Disposal"];
 
             useEffect(() => {
                 if (!firebaseInstances) return;
@@ -1090,18 +1353,6 @@
                 const unsubscribeTools = window.onSnapshot(toolsCol, (snapshot) => {
                     const toolsData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
                     setTools(toolsData);
-                    if (snapshot.empty) {
-                        const defaultTools = [
-                            { name: 'Grinder', status: 'Available', homeSiteName: 'Main Warehouse' },
-                            { name: 'Welding Machine', status: 'Available', homeSiteName: 'Main Warehouse' },
-                        ];
-                        const batch = window.writeBatch(firebaseInstances.primaryDb);
-                        defaultTools.forEach(tool => {
-                            const docRef = window.doc(toolsCol);
-                            batch.set(docRef, tool);
-                        });
-                        batch.commit().catch(err => console.error("Error seeding tools:", err));
-                    }
                     setLoading(false);
                 }, (error) => {
                     console.error("Error fetching tools:", error);
@@ -1125,21 +1376,32 @@
 
             const handleAddTool = async (e) => {
                 e.preventDefault();
-                if (!newToolData.name.trim() || !newToolData.siteId) {
-                    showModal("Please enter a tool name and select a home site.");
+                if (!newToolData.name.trim() || !newToolData.locationId) {
+                    showModal("Please provide a tool name and select a location.");
                     return;
                 }
-                const site = sites.find(s => s.id === newToolData.siteId);
+
+                const toolName = newToolData.name.trim();
+                const prefix = toolName.substring(0, 3).toUpperCase();
+                
+                const toolsQuery = query(collection(firebaseInstances.primaryDb, '/public/data/tools'), where("name", "==", toolName));
+                const querySnapshot = await getDocs(toolsQuery);
+                const newNumber = (querySnapshot.size + 1).toString().padStart(3, '0');
+                const assetTag = `${prefix}-${newNumber}`;
+
+                const site = sites.find(s => s.id === newToolData.locationId);
                 try {
                     const toolsCol = window.collection(firebaseInstances.primaryDb, '/public/data/tools');
                     await window.addDoc(toolsCol, { 
-                        name: newToolData.name, 
+                        name: toolName, 
+                        assetTag: assetTag,
                         status: 'Available',
-                        homeSiteId: newToolData.siteId,
-                        homeSiteName: site?.name || 'Unknown Site'
+                        condition: 'Good',
+                        locationId: newToolData.locationId,
+                        locationName: newToolData.locationId === 'warehouse' ? 'Main Warehouse' : site?.name || 'Unknown Site'
                     });
-                    setNewToolData({ name: '', siteId: '' });
-                    showModal("Tool added successfully!");
+                    setNewToolData({ name: '', locationId: '' });
+                    showModal(`Tool added successfully with Asset Tag: ${assetTag}`);
                 } catch (error) {
                     console.error("Error adding tool:", error);
                     showModal("Failed to add tool.");
@@ -1160,13 +1422,13 @@
             };
             
             const handleUpdateTool = async () => {
-                 if (!editingTool.name.trim()) {
-                    showModal("Tool name cannot be empty.");
+                 if (!editingTool.name.trim() || !editingTool.assetTag.trim()) {
+                    showModal("Tool Name and Asset Tag cannot be empty.");
                     return;
                 }
                 try {
                     const toolRef = window.doc(firebaseInstances.primaryDb, '/public/data/tools', editingTool.id);
-                    await window.updateDoc(toolRef, { name: editingTool.name });
+                    await window.updateDoc(toolRef, { name: editingTool.name, assetTag: editingTool.assetTag });
                     setEditingTool(null);
                     showModal("Tool updated successfully.");
                 } catch (error) {
@@ -1175,74 +1437,303 @@
                 }
             };
 
+            const handleCheckOutTool = async (toolId) => {
+                try {
+                    const toolRef = window.doc(firebaseInstances.primaryDb, '/public/data/tools', toolId);
+                    await window.updateDoc(toolRef, { 
+                        status: 'Borrowed',
+                        borrowedDate: window.serverTimestamp()
+                    });
+                    showModal("Tool checked out successfully.");
+                } catch (error) {
+                    console.error("Error checking out tool:", error);
+                    showModal("Failed to check out tool.");
+                }
+            };
+
             const handleReturnTool = async (toolId) => {
                  try {
                     const toolRef = window.doc(firebaseInstances.primaryDb, '/public/data/tools', toolId);
                     await window.updateDoc(toolRef, { 
                         status: 'Available',
-                        borrowedBy: '',
-                        siteName: '',
-                        borrowedDate: null
+                        locationId: 'warehouse',
+                        locationName: 'Main Warehouse',
+                        borrowedBy: null,
+                        requestedBy: null,
+                        requestedById: null,
+                        requestedDate: null
                     });
-                    showModal("Tool marked as returned.");
+                    showModal("Tool marked as returned to warehouse.");
                 } catch (error) {
                     console.error("Error returning tool:", error);
                     showModal("Failed to return tool.");
                 }
             };
+            
+            const handleConditionChange = async (toolId, newCondition) => {
+                try {
+                    const toolRef = window.doc(firebaseInstances.primaryDb, '/public/data/tools', toolId);
+                    await window.updateDoc(toolRef, { condition: newCondition });
+                    showModal("Tool condition updated successfully.");
+                } catch (error) {
+                    console.error("Error updating tool condition:", error);
+                    showModal("Failed to update tool condition.");
+                }
+            };
 
-            if (loading) return <LoadingSpinner message="Loading Tools..." />;
+            const filteredTools = tools.filter(tool =>
+                tool.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+                (tool.assetTag && tool.assetTag.toLowerCase().includes(searchTerm.toLowerCase()))
+            );
+            
+            const dashboardData = {
+                total: tools.length,
+                good: tools.filter(t => t.condition === 'Good').length,
+                needsRepair: tools.filter(t => t.condition === 'Needs Repair').length,
+                underMaintenance: tools.filter(t => t.condition === 'Under Maintenance').length,
+                forDisposal: tools.filter(t => t.condition === 'For Disposal').length,
+            };
+
+            const locationSummary = tools.reduce((acc, tool) => {
+                const location = tool.locationName || 'Unknown';
+                acc[location] = (acc[location] || 0) + 1;
+                return acc;
+            }, {});
+
+
+            if (loading) return <LoadingSpinner message="Loading Tools Management..." />;
 
             return (
                 <div className="p-4 sm:p-8">
                     <h2 className="text-3xl font-bold mb-6">Tools Management</h2>
-                    <div className="bg-white p-6 rounded-lg shadow-md mb-8">
-                        <h3 className="text-xl font-semibold mb-4">Add New Tool</h3>
-                        <form onSubmit={handleAddTool} className="grid grid-cols-1 md:grid-cols-3 gap-4 items-end">
-                            <div className="flex-grow">
-                                <label htmlFor="tool-name" className="block text-sm font-medium text-gray-700">Tool Name</label>
-                                <input id="tool-name" type="text" placeholder="e.g., Grinder" value={newToolData.name} onChange={e => setNewToolData({...newToolData, name: e.target.value})} className="mt-1 p-2 border rounded w-full" />
-                            </div>
-                             <div className="flex-grow">
-                                <label htmlFor="site-select" className="block text-sm font-medium text-gray-700">Home Site</label>
-                                <select id="site-select" value={newToolData.siteId} onChange={e => setNewToolData({...newToolData, siteId: e.target.value})} className="mt-1 w-full p-2 border rounded bg-white">
-                                    <option value="" disabled>Select a site</option>
-                                    {sites.map(site => <option key={site.id} value={site.id}>{site.name}</option>)}
-                                </select>
-                            </div>
-                            <button type="submit" className="bg-green-500 text-white px-4 py-2 rounded hover:bg-green-600 h-10">Add Tool</button>
-                        </form>
+                    
+                    <div className="mb-6 border-b border-gray-200">
+                        <nav className="-mb-px flex space-x-8" aria-label="Tabs">
+                            <button onClick={() => setActiveTab('dashboard')} className={`whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm ${activeTab === 'dashboard' ? 'border-blue-500 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'}`}>
+                                Dashboard
+                            </button>
+                            <button onClick={() => setActiveTab('summary')} className={`whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm ${activeTab === 'summary' ? 'border-blue-500 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'}`}>
+                                Location Summary
+                            </button>
+                            <button onClick={() => setActiveTab('manage')} className={`whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm ${activeTab === 'manage' ? 'border-blue-500 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'}`}>
+                                Manage All Tools
+                            </button>
+                        </nav>
                     </div>
 
-                    <div className="bg-white p-6 rounded-lg shadow-md">
-                        <h3 className="text-xl font-semibold mb-4">Existing Tools</h3>
-                        <div className="space-y-4">
-                            {tools.map(tool => (
-                                <div key={tool.id} className="p-4 border rounded-lg flex flex-col md:flex-row justify-between items-center gap-4">
-                                    {editingTool?.id === tool.id ? (
-                                        <>
-                                            <input type="text" value={editingTool.name} onChange={e => setEditingTool({...editingTool, name: e.target.value})} className="p-2 border rounded w-full md:w-auto flex-grow" />
-                                            <div className="flex space-x-2">
-                                                <button onClick={handleUpdateTool} className="bg-blue-500 text-white px-3 py-1 rounded hover:bg-blue-600">Save</button>
-                                                <button onClick={() => setEditingTool(null)} className="bg-gray-500 text-white px-3 py-1 rounded hover:bg-gray-600">Cancel</button>
-                                            </div>
-                                        </>
-                                    ) : (
-                                        <>
-                                            <div className="flex-grow">
-                                                <p className="font-semibold text-lg">{tool.name}</p>
-                                                <p className="text-sm text-gray-600">Status: {tool.status} {tool.borrowedBy && `(by ${tool.borrowedBy} at ${tool.siteName})`}</p>
-                                                <p className="text-xs text-gray-500">Home Site: {tool.homeSiteName}</p>
-                                            </div>
-                                            <div className="flex space-x-2">
-                                                {tool.status === 'Hiram' && <button onClick={() => handleReturnTool(tool.id)} className="bg-green-500 text-white px-3 py-1 rounded hover:bg-green-600">Mark as Returned</button>}
-                                                <button onClick={() => setEditingTool(tool)} className="bg-yellow-500 text-white px-3 py-1 rounded hover:bg-yellow-600">Edit</button>
-                                                <button onClick={() => handleDeleteTool(tool.id)} className="bg-red-500 text-white px-3 py-1 rounded hover:bg-red-600">Delete</button>
-                                            </div>
-                                        </>
-                                    )}
+                    <div>
+                        {activeTab === 'dashboard' && (
+                            <div className="grid grid-cols-2 md:grid-cols-5 gap-4 text-center">
+                                <div className="bg-blue-500 text-white p-6 rounded-lg shadow-lg">
+                                    <p className="text-4xl font-bold">{dashboardData.total}</p>
+                                    <p className="text-lg">Total Tools</p>
                                 </div>
-                            ))}
+                                <div className="bg-green-500 text-white p-6 rounded-lg shadow-lg">
+                                    <p className="text-4xl font-bold">{dashboardData.good}</p>
+                                    <p className="text-lg">Good Condition</p>
+                                </div>
+                                <div className="bg-yellow-500 text-white p-6 rounded-lg shadow-lg">
+                                    <p className="text-4xl font-bold">{dashboardData.needsRepair}</p>
+                                    <p className="text-lg">Needs Repair</p>
+                                </div>
+                                <div className="bg-orange-500 text-white p-6 rounded-lg shadow-lg">
+                                    <p className="text-4xl font-bold">{dashboardData.underMaintenance}</p>
+                                    <p className="text-lg">Maintenance</p>
+                                </div>
+                                <div className="bg-red-500 text-white p-6 rounded-lg shadow-lg">
+                                    <p className="text-4xl font-bold">{dashboardData.forDisposal}</p>
+                                    <p className="text-lg">For Disposal</p>
+                                </div>
+                            </div>
+                        )}
+
+                        {activeTab === 'summary' && (
+                             <div className="bg-white p-6 rounded-lg shadow-md">
+                                <h3 className="text-xl font-semibold mb-4">Tool Count by Location</h3>
+                                <div className="overflow-x-auto">
+                                    <table className="min-w-full">
+                                        <thead className="bg-gray-200">
+                                            <tr>
+                                                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Location</th>
+                                                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Total Tools</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody className="bg-white divide-y divide-gray-200">
+                                            {Object.entries(locationSummary).map(([location, count]) => (
+                                                <tr key={location}>
+                                                    <td className="px-6 py-4 whitespace-nowrap font-medium">{location}</td>
+                                                    <td className="px-6 py-4 whitespace-nowrap font-bold">{count}</td>
+                                                </tr>
+                                            ))}
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+                        )}
+
+                        {activeTab === 'manage' && (
+                            <>
+                                <div className="bg-white p-6 rounded-lg shadow-md mb-8">
+                                    <h3 className="text-xl font-semibold mb-4">Add New Tool</h3>
+                                    <form onSubmit={handleAddTool} className="grid grid-cols-1 md:grid-cols-3 gap-4 items-end">
+                                        <div>
+                                            <label className="block text-sm font-medium text-gray-700">Tool Name</label>
+                                            <input type="text" placeholder="e.g., Grinder" value={newToolData.name} onChange={e => setNewToolData({...newToolData, name: e.target.value.toUpperCase()})} className="mt-1 p-2 border rounded w-full uppercase" />
+                                        </div>
+                                        <div>
+                                            <label className="block text-sm font-medium text-gray-700">Location (Site)</label>
+                                            <select value={newToolData.locationId} onChange={e => setNewToolData({...newToolData, locationId: e.target.value})} className="mt-1 w-full p-2 border rounded bg-white">
+                                                <option value="" disabled>Select a location</option>
+                                                <option value="warehouse">Main Warehouse</option>
+                                                {sites.map(site => <option key={site.id} value={site.id}>{site.name}</option>)}
+                                            </select>
+                                        </div>
+                                        <button type="submit" className="bg-green-500 text-white px-4 py-2 rounded hover:bg-green-600 h-10">Add Tool & Auto-Generate ID</button>
+                                    </form>
+                                </div>
+
+                                <div className="bg-white p-6 rounded-lg shadow-md">
+                                    <h3 className="text-xl font-semibold mb-4">Existing Tools</h3>
+                                    <input 
+                                        type="text" 
+                                        placeholder="Search by tool name or asset tag..." 
+                                        className="w-full p-3 mb-4 border rounded-lg shadow-sm uppercase" 
+                                        value={searchTerm} 
+                                        onChange={e => setSearchTerm(e.target.value.toUpperCase())} 
+                                    />
+                                    <div className="space-y-4">
+                                        {filteredTools.map(tool => (
+                                            <div key={tool.id} className="p-4 border rounded-lg flex flex-col md:flex-row justify-between items-center gap-4">
+                                                {editingTool?.id === tool.id ? (
+                                                    <>
+                                                        <input type="text" value={editingTool.name} onChange={e => setEditingTool({...editingTool, name: e.target.value.toUpperCase()})} className="p-2 border rounded w-full md:w-auto uppercase" placeholder="Tool Name" />
+                                                        <input type="text" value={editingTool.assetTag} disabled className="p-2 border rounded w-full md:w-auto bg-gray-200" placeholder="Asset Tag" />
+                                                        <div className="flex space-x-2">
+                                                            <button onClick={handleUpdateTool} className="bg-blue-500 text-white px-3 py-1 rounded hover:bg-blue-600">Save</button>
+                                                            <button onClick={() => setEditingTool(null)} className="bg-gray-500 text-white px-3 py-1 rounded hover:bg-gray-600">Cancel</button>
+                                                        </div>
+                                                    </>
+                                                ) : (
+                                                    <>
+                                                        <div className="flex-grow">
+                                                            <p className="font-semibold text-lg">{tool.name} <span className="text-base font-normal text-gray-500">({tool.assetTag})</span></p>
+                                                            <p className="text-sm text-gray-600">Status: {tool.status} {tool.requestedBy && `(Req by ${tool.requestedBy} for ${tool.siteName})`}</p>
+                                                            <p className="text-xs text-gray-500">Location: {tool.locationName}</p>
+                                                        </div>
+                                                        <div className="flex flex-wrap items-center gap-2">
+                                                            <div>
+                                                                <label className="sr-only">Condition</label>
+                                                                <select 
+                                                                    value={tool.condition || 'Good'} 
+                                                                    onChange={(e) => handleConditionChange(tool.id, e.target.value)}
+                                                                    className="p-1 border rounded bg-white text-sm"
+                                                                >
+                                                                    {TOOL_CONDITIONS.map(c => <option key={c} value={c}>{c}</option>)}
+                                                                </select>
+                                                            </div>
+                                                            {tool.status === 'Approved' && <button onClick={() => handleCheckOutTool(tool.id)} className="bg-green-500 text-white px-3 py-1 rounded hover:bg-green-600">Check Out</button>}
+                                                            {tool.status === 'Borrowed' && <button onClick={() => handleReturnTool(tool.id)} className="bg-indigo-500 text-white px-3 py-1 rounded hover:bg-indigo-600">Mark Returned</button>}
+                                                            <button onClick={() => setEditingTool(tool)} className="bg-yellow-500 text-white px-3 py-1 rounded hover:bg-yellow-600">Edit</button>
+                                                            <button onClick={() => handleDeleteTool(tool.id)} className="bg-red-500 text-white px-3 py-1 rounded hover:bg-red-600">Delete</button>
+                                                        </div>
+                                                    </>
+                                                )}
+                                            </div>
+                                        ))}
+                                    </div>
+                                </div>
+                            </>
+                        )}
+                    </div>
+                </div>
+            );
+        };
+        
+        const ToolRequestsPage = () => {
+            const { firebaseInstances, showModal } = useAppContext();
+            const [requests, setRequests] = useState([]);
+            const [loading, setLoading] = useState(true);
+
+            useEffect(() => {
+                if (!firebaseInstances) return;
+                const toolsCol = window.collection(firebaseInstances.primaryDb, '/public/data/tools');
+                const q = window.query(toolsCol, where("status", "==", "Pending Approval"));
+                const unsubscribe = onSnapshot(q, (snapshot) => {
+                    const requestsData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+                    setRequests(requestsData);
+                    setLoading(false);
+                }, (error) => {
+                    console.error("Error fetching tool requests:", error);
+                    showModal("Failed to load tool requests.");
+                    setLoading(false);
+                });
+                return () => unsubscribe();
+            }, [firebaseInstances]);
+
+            const handleApprove = async (toolId) => {
+                try {
+                    const toolRef = window.doc(firebaseInstances.primaryDb, '/public/data/tools', toolId);
+                    await window.updateDoc(toolRef, { status: 'Approved' });
+                    showModal("Request approved. Tool is ready for checkout.");
+                } catch (error) {
+                    console.error("Error approving request:", error);
+                    showModal("Failed to approve request.");
+                }
+            };
+
+            const handleDeny = async (toolId) => {
+                try {
+                    const toolRef = window.doc(firebaseInstances.primaryDb, '/public/data/tools', toolId);
+                    await window.updateDoc(toolRef, { 
+                        status: 'Available',
+                        requestedBy: null,
+                        requestedById: null,
+                        requestedDate: null
+                    });
+                    showModal("Request denied. Tool is now available again.");
+                } catch (error) {
+                    console.error("Error denying request:", error);
+                    showModal("Failed to deny request.");
+                }
+            };
+            
+            if (loading) return <LoadingSpinner message="Loading Tool Requests..." />;
+
+            return (
+                <div className="p-4 sm:p-8">
+                    <h2 className="text-3xl font-bold mb-6">Pending Tool Requests</h2>
+                     <div className="bg-white p-6 rounded-lg shadow-md">
+                         <div className="overflow-x-auto">
+                            <table className="min-w-full">
+                                <thead className="bg-gray-200">
+                                    <tr>
+                                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Tool Name</th>
+                                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Asset Tag</th>
+                                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Requested By</th>
+                                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Site</th>
+                                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Date</th>
+                                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
+                                    </tr>
+                                </thead>
+                                <tbody className="bg-white divide-y divide-gray-200">
+                                    {requests.length === 0 && (
+                                        <tr><td colSpan="6" className="text-center p-8 text-gray-500">No pending tool requests.</td></tr>
+                                    )}
+                                    {requests.map(req => (
+                                        <tr key={req.id}>
+                                            <td className="px-6 py-4 whitespace-nowrap font-medium">{req.name}</td>
+                                            <td className="px-6 py-4 whitespace-nowrap font-semibold">{req.assetTag}</td>
+                                            <td className="px-6 py-4 whitespace-nowrap">{req.requestedBy}</td>
+                                            <td className="px-6 py-4 whitespace-nowrap">{req.locationName}</td>
+                                            <td className="px-6 py-4 whitespace-nowrap">{req.requestedDate?.toDate().toLocaleDateString()}</td>
+                                            <td className="px-6 py-4 whitespace-nowrap space-x-2">
+                                                <button onClick={() => handleApprove(req.id)} className="bg-green-500 text-white px-3 py-1 rounded hover:bg-green-600">Approve</button>
+                                                <button onClick={() => handleDeny(req.id)} className="bg-red-500 text-white px-3 py-1 rounded hover:bg-red-600">Deny</button>
+                                            </td>
+                                        </tr>
+                                    ))}
+                                </tbody>
+                            </table>
                         </div>
                     </div>
                 </div>
@@ -1250,22 +1741,34 @@
         };
 
         const App = () => {
-            const { user, loading, firebaseInstances, setNewOrderCount } = useAppContext();
+            const { user, loading, firebaseInstances, setNewOrderCount, setNewToolRequestCount } = useAppContext();
             const [currentPage, setCurrentPage] = useState('inventory');
-            const [appLoadTime] = useState(new Date());
+            const [showWelcome, setShowWelcome] = useState(true);
 
             useEffect(() => {
                 if (!user || !firebaseInstances || (user.role !== 'admin' && user.role !== 'warehouse')) {
                     return;
                 }
-                const q = window.query(
+                const ordersQuery = window.query(
                     window.collection(firebaseInstances.primaryDb, "orders"), 
-                    window.where("createdAt", ">", appLoadTime)
+                    window.where("isNew", "==", true)
                 );
-                const unsubscribe = window.onSnapshot(q, (snapshot) => {
+                const toolsQuery = window.query(
+                    window.collection(firebaseInstances.primaryDb, "/public/data/tools"), 
+                    window.where("status", "==", "Pending Approval")
+                );
+
+                const unsubOrders = window.onSnapshot(ordersQuery, (snapshot) => {
                     setNewOrderCount(snapshot.size);
                 });
-                return () => unsubscribe();
+                const unsubTools = window.onSnapshot(toolsQuery, (snapshot) => {
+                    setNewToolRequestCount(snapshot.size);
+                });
+
+                return () => {
+                    unsubOrders();
+                    unsubTools();
+                };
             }, [user, firebaseInstances]);
 
             useEffect(() => {
@@ -1287,6 +1790,9 @@
             }
             
             if (!user) {
+                if (showWelcome) {
+                    return <WelcomePage onVideoEnd={() => setShowWelcome(false)} />;
+                }
                 return <LoginPage />;
             }
 
@@ -1299,6 +1805,8 @@
                     case 'user_management': return <UserManagementPage />;
                     case 'tools': return <ToolsPage />;
                     case 'tools_management': return <ToolsManagementPage />;
+                    case 'tool_requests': return <ToolRequestsPage />;
+                    case 'my_tool_requests': return <MyToolRequestsPage />;
                     default: return <InventoryPage />;
                 }
             };

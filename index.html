@@ -34,6 +34,8 @@
         window.getAuth = getAuth;
         window.signInAnonymously = signInAnonymously;
     </script>
+    <!-- Recharts -->
+    <script src="https://unpkg.com/recharts/umd/Recharts.min.js"></script>
     <!-- Custom Font -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -67,6 +69,29 @@
             from { transform: rotate(0deg); }
             to { transform: rotate(360deg); }
         }
+        /* NEW: Toast styles */
+        .toast-container {
+            position: fixed;
+            top: 1.5rem;
+            right: 1.5rem;
+            z-index: 2000;
+        }
+        .toast {
+            min-width: 250px;
+            padding: 1rem 1.5rem;
+            border-radius: 0.5rem;
+            color: white;
+            box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
+            animation: fadeInOut 3s ease-in-out forwards;
+        }
+        .toast-success { background-color: #28a745; }
+        .toast-error { background-color: #dc3545; }
+        @keyframes fadeInOut {
+            0% { opacity: 0; transform: translateY(-20px); }
+            10% { opacity: 1; transform: translateY(0); }
+            90% { opacity: 1; transform: translateY(0); }
+            100% { opacity: 0; transform: translateY(-20px); }
+        }
     </style>
 </head>
 <body class="bg-gray-100">
@@ -74,7 +99,7 @@
 
     <script type="text/babel">
         const { useState, useEffect, createContext, useContext, useRef } = React;
-
+        
         // --- Firebase Configuration ---
         const primaryFirebaseConfig = {
             apiKey: "AIzaSyArtDGiH3YtVc7Ro43limWa1cCULnVXp4w",
@@ -100,6 +125,7 @@
             const [user, setUser] = useState(null);
             const [loading, setLoading] = useState(true);
             const [modal, setModal] = useState({ isOpen: false, message: '', onConfirm: null });
+            const [toast, setToast] = useState({ show: false, message: '', type: 'success' }); // NEW: Toast state
             const [firebaseInstances, setFirebaseInstances] = useState(null);
             const [newOrderCount, setNewOrderCount] = useState(0);
             const [newToolRequestCount, setNewToolRequestCount] = useState(0);
@@ -184,11 +210,35 @@
             const showModal = (message, onConfirm = null) => setModal({ isOpen: true, message, onConfirm });
             const closeModal = () => setModal({ isOpen: false, message: '', onConfirm: null });
 
-            const value = { user, users, login, logout, loading, firebaseInstances, modal, showModal, closeModal, newOrderCount, setNewOrderCount, newToolRequestCount, setNewToolRequestCount };
+            // NEW: Function to show a toast notification
+            const showToast = (message, type = 'success') => {
+                setToast({ show: true, message, type });
+                setTimeout(() => {
+                    setToast({ show: false, message: '', type });
+                }, 3000);
+            };
+
+            const value = { user, users, login, logout, loading, firebaseInstances, modal, showModal, closeModal, toast, showToast, newOrderCount, setNewOrderCount, newToolRequestCount, setNewToolRequestCount };
             return <AppContext.Provider value={value}>{children}</AppContext.Provider>;
         };
 
         const useAppContext = () => useContext(AppContext);
+
+        // NEW: Toast Component
+        const Toast = () => {
+            const { toast } = useAppContext();
+            if (!toast.show) return null;
+
+            const toastClass = toast.type === 'success' ? 'toast-success' : 'toast-error';
+
+            return (
+                <div className="toast-container">
+                    <div className={`toast ${toastClass}`}>
+                        {toast.message}
+                    </div>
+                </div>
+            );
+        };
 
         const Modal = () => {
             const { modal, closeModal } = useAppContext();
@@ -215,6 +265,13 @@
                 <div className="w-16 h-16 border-4 border-blue-500 border-t-transparent rounded-full animate-spin"></div>
                 <p className="mt-4 text-lg text-gray-600">{message}</p>
             </div>
+        );
+
+        const ButtonSpinner = () => (
+            <svg className="animate-spin -ml-1 mr-3 h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+            </svg>
         );
 
         const Header = () => {
@@ -274,6 +331,7 @@
                              <>
                                 <li><button onClick={() => handleNavClick('user_management')} className="hover:text-blue-300">User Management</button></li>
                                 <li><button onClick={() => handleNavClick('tools_management')} className="hover:text-blue-300">Tools Management</button></li>
+                                <li><button onClick={() => handleNavClick('reports')} className="hover:text-blue-300">Reports</button></li>
                              </>
                         )}
                     </ul>
@@ -282,35 +340,15 @@
         };
 
         const WelcomePage = ({ onVideoEnd }) => {
-            const videoRef = useRef(null);
-            const [videoStarted, setVideoStarted] = useState(false);
-
-            const handlePlay = () => {
-                if (videoRef.current) {
-                    videoRef.current.play();
-                    setVideoStarted(true);
-                }
-            };
-
             return (
-                <div className="fixed inset-0 w-screen h-screen bg-black overflow-hidden cursor-pointer" onClick={onVideoEnd}>
+                <div className="fixed inset-0 w-screen h-screen bg-black overflow-hidden" onClick={onVideoEnd}>
                     <video 
-                        ref={videoRef}
                         src="https://i.imgur.com/ys1F2xc.mp4" 
                         muted 
+                        autoPlay // MODIFIED: Video now autoplays
                         onEnded={onVideoEnd}
                         className="absolute top-0 left-0 w-full h-full object-cover z-0"
                     ></video>
-                    {!videoStarted && (
-                        <div className="absolute inset-0 bg-black bg-opacity-50 flex items-center justify-center z-10">
-                            <button 
-                                onClick={(e) => { e.stopPropagation(); handlePlay(); }}
-                                className="bg-white text-black font-bold py-4 px-8 rounded-full text-2xl hover:bg-gray-200 transition-colors"
-                            >
-                                Click to Begin
-                            </button>
-                        </div>
-                    )}
                 </div>
             );
         };
@@ -352,7 +390,7 @@
         
         // --- PAGES --- //
         const InventoryPage = () => {
-            const { user, firebaseInstances, showModal } = useAppContext();
+            const { user, firebaseInstances, showModal, showToast } = useAppContext(); // MODIFIED: Added showToast
             const [inventory, setInventory] = useState([]);
             const [loading, setLoading] = useState(true);
             const [searchTerm, setSearchTerm] = useState("");
@@ -400,7 +438,7 @@
                     const existingItem = prevCart[item.id];
                     return { ...prevCart, [item.id]: { ...item, quantity: (existingItem ? existingItem.quantity : 0) + quantity }};
                 });
-                showModal(`${quantity} x ${item.name} added to cart.`);
+                showToast(`${quantity} x ${item.name} added to cart.`, 'success'); // MODIFIED: Use toast
             };
 
             const handleAddPicture = async (itemId) => {
@@ -410,10 +448,10 @@
                         const docRef = window.doc(firebaseInstances.primaryDb, `/public/data/inventory_overrides/${itemId}`);
                         await window.setDoc(docRef, { imageUrl });
                         setCustomImages(prev => ({...prev, [itemId]: imageUrl}));
-                        showModal("Custom image updated successfully!");
+                        showToast("Custom image updated!", 'success');
                     } catch (error) {
                         console.error("Error updating image URL:", error);
-                        showModal("Failed to update image URL.");
+                        showToast("Failed to update image URL.", 'error');
                     }
                 }
             };
@@ -457,7 +495,7 @@
         };
 
         const CartPage = ({ setCurrentPage }) => {
-            const { user, firebaseInstances, showModal } = useAppContext();
+            const { user, firebaseInstances, showModal, showToast } = useAppContext();
             const [cart, setCart] = useState(() => {
                 try {
                     const savedCart = localStorage.getItem('dlv_cart');
@@ -525,12 +563,11 @@
                     await window.addDoc(ordersCol, orderData);
                     setCart({});
                     localStorage.removeItem('dlv_cart');
-                    showModal("Order placed successfully!", () => {
-                        setCurrentPage('order_history');
-                    });
+                    showToast("Order placed successfully!", 'success');
+                    setCurrentPage('order_history');
                 } catch (error) {
                     console.error("Error placing order:", error);
-                    showModal(`Failed to place order. Error: ${error.message}`);
+                    showToast(`Failed to place order. Error: ${error.message}`, 'error');
                 } finally {
                     setIsPlacingOrder(false);
                 }
@@ -567,8 +604,8 @@
                                     <label className="block text-gray-700 font-bold mb-2">Special Requests</label>
                                     <textarea value={specialRequests} onChange={e => setSpecialRequests(e.target.value.toUpperCase())} className="w-full p-2 border rounded uppercase" rows="3"></textarea>
                                 </div>
-                                <button onClick={handlePlaceOrder} disabled={isPlacingOrder} className="w-full bg-green-600 text-white p-3 rounded-lg font-bold hover:bg-green-700 disabled:bg-gray-400">
-                                    {isPlacingOrder ? 'Placing Order...' : 'Place Order'}
+                                <button onClick={handlePlaceOrder} disabled={isPlacingOrder} className="w-full bg-green-600 text-white p-3 rounded-lg font-bold hover:bg-green-700 disabled:bg-gray-400 flex items-center justify-center">
+                                    {isPlacingOrder ? <ButtonSpinner /> : 'Place Order'}
                                 </button>
                             </div>
                         </div>
@@ -732,11 +769,11 @@
                     setLoading(false);
                 }, (error) => {
                     console.error("Error fetching orders:", error);
-                     if (error.code === 'permission-denied') {
-                          showModal("Could not load orders due to a permissions issue. Please check the security rules in your Firebase project.");
-                     } else {
-                         showModal("Failed to load orders.");
-                     }
+                        if (error.code === 'permission-denied') {
+                            showModal("Could not load orders due to a permissions issue. Please check the security rules in your Firebase project.");
+                        } else {
+                            showModal("Failed to load orders.");
+                        }
                     setLoading(false);
                 });
                 return () => unsubscribe();
@@ -1739,6 +1776,151 @@
                 </div>
             );
         };
+        
+        const ReportsPage = () => {
+            const { firebaseInstances, showModal } = useAppContext();
+            const [orders, setOrders] = useState([]);
+            const [tools, setTools] = useState([]);
+            const [loading, setLoading] = useState(true);
+
+            useEffect(() => {
+                if (!firebaseInstances) return;
+                const fetchData = async () => {
+                    try {
+                        const ordersCol = window.collection(firebaseInstances.primaryDb, "orders");
+                        const ordersSnapshot = await window.getDocs(ordersCol);
+                        setOrders(ordersSnapshot.docs.map(doc => doc.data()));
+
+                        const toolsCol = window.collection(firebaseInstances.primaryDb, "/public/data/tools");
+                        const toolsSnapshot = await window.getDocs(toolsCol);
+                        setTools(toolsSnapshot.docs.map(doc => doc.data()));
+                    } catch (error) {
+                        console.error("Error fetching data for reports:", error);
+                        showModal("Failed to load data for reports.");
+                    } finally {
+                        setLoading(false);
+                    }
+                };
+                fetchData();
+            }, [firebaseInstances]);
+            
+            if (loading) return <LoadingSpinner message="Generating Reports..." />;
+
+            return (
+                <div className="p-4 sm:p-8">
+                    <h2 className="text-3xl font-bold mb-6">Reports and Analytics</h2>
+                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+                        <div className="bg-white p-6 rounded-lg shadow-md">
+                            <h3 className="text-xl font-semibold mb-4 text-center">Orders by Status</h3>
+                            <OrdersByStatusChart orders={orders} />
+                        </div>
+                        <div className="bg-white p-6 rounded-lg shadow-md">
+                            <h3 className="text-xl font-semibold mb-4 text-center">Tools by Status</h3>
+                            <ToolsByStatusChart tools={tools} />
+                        </div>
+                         <div className="bg-white p-6 rounded-lg shadow-md lg:col-span-2">
+                            <h3 className="text-xl font-semibold mb-4 text-center">Orders Over Time (Last 30 Days)</h3>
+                            <OrdersOverTimeChart orders={orders} />
+                        </div>
+                    </div>
+                </div>
+            );
+        };
+        
+        const OrdersByStatusChart = ({ orders }) => {
+            if (!window.Recharts) return <div>Loading Chart...</div>;
+            const { ResponsiveContainer, PieChart, Pie, Cell, Tooltip, Legend } = window.Recharts;
+
+            const data = orders.reduce((acc, order) => {
+                const status = order.status || 'Unknown';
+                const existing = acc.find(item => item.name === status);
+                if (existing) {
+                    existing.value += 1;
+                } else {
+                    acc.push({ name: status, value: 1 });
+                }
+                return acc;
+            }, []);
+
+            const COLORS = ['#FF8042', '#0088FE', '#00C49F', '#FFBB28', '#A28CFF'];
+
+            return (
+                <ResponsiveContainer width="100%" height={300}>
+                    <PieChart>
+                        <Pie data={data} cx="50%" cy="50%" labelLine={false} label={({ name, percent }) => `${name}: ${(percent * 100).toFixed(0)}%`} outerRadius={100} fill="#8884d8" dataKey="value">
+                            {data.map((entry, index) => <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />)}
+                        </Pie>
+                        <Tooltip />
+                        <Legend />
+                    </PieChart>
+                </ResponsiveContainer>
+            );
+        };
+
+        const ToolsByStatusChart = ({ tools }) => {
+             if (!window.Recharts) return <div>Loading Chart...</div>;
+             const { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend } = window.Recharts;
+
+             const data = tools.reduce((acc, tool) => {
+                const status = tool.status || 'Unknown';
+                const existing = acc.find(item => item.name === status);
+                if (existing) {
+                    existing.count += 1;
+                } else {
+                    acc.push({ name: status, count: 1 });
+                }
+                return acc;
+            }, []);
+
+            return (
+                 <ResponsiveContainer width="100%" height={300}>
+                    <BarChart data={data} margin={{ top: 5, right: 30, left: 20, bottom: 5 }}>
+                        <CartesianGrid strokeDasharray="3 3" />
+                        <XAxis dataKey="name" />
+                        <YAxis />
+                        <Tooltip />
+                        <Legend />
+                        <Bar dataKey="count" fill="#8884d8" />
+                    </BarChart>
+                </ResponsiveContainer>
+            );
+        };
+
+        const OrdersOverTimeChart = ({ orders }) => {
+            if (!window.Recharts) return <div>Loading Chart...</div>;
+            const { ResponsiveContainer, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend } = window.Recharts;
+
+            const last30Days = new Date();
+            last30Days.setDate(last30Days.getDate() - 30);
+
+            const data = orders
+                .filter(order => order.createdAt && order.createdAt.toDate() > last30Days)
+                .reduce((acc, order) => {
+                    const date = order.createdAt.toDate().toLocaleDateString();
+                    const existing = acc.find(item => item.date === date);
+                    if (existing) {
+                        existing.orders += 1;
+                    } else {
+                        acc.push({ date, orders: 1 });
+                    }
+                    return acc;
+                }, [])
+                .sort((a,b) => new Date(a.date) - new Date(b.date));
+
+            return (
+                 <ResponsiveContainer width="100%" height={400}>
+                    <LineChart data={data} margin={{ top: 5, right: 30, left: 20, bottom: 5 }}>
+                        <CartesianGrid strokeDasharray="3 3" />
+                        <XAxis dataKey="date" />
+                        <YAxis />
+                        <Tooltip />
+                        <Legend />
+                        <Line type="monotone" dataKey="orders" stroke="#82ca9d" />
+                    </LineChart>
+                </ResponsiveContainer>
+            );
+        };
+
 
         const App = () => {
             const { user, loading, firebaseInstances, setNewOrderCount, setNewToolRequestCount } = useAppContext();
@@ -1807,6 +1989,7 @@
                     case 'tools_management': return <ToolsManagementPage />;
                     case 'tool_requests': return <ToolRequestsPage />;
                     case 'my_tool_requests': return <MyToolRequestsPage />;
+                    case 'reports': return <ReportsPage />;
                     default: return <InventoryPage />;
                 }
             };
@@ -1824,6 +2007,7 @@
 
         const Root = () => (
             <AppProvider>
+                <Toast />
                 <Modal />
                 <App />
             </AppProvider>

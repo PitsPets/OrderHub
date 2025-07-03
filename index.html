@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
     <title>DLV Order Hub</title>
     <!-- Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
@@ -49,7 +49,7 @@
             display: flex;
             align-items: center;
             justify-content: center;
-            z-index: 50;
+            z-index: 1050;
         }
         .modal-content {
             background-color: white;
@@ -72,11 +72,9 @@
     <div id="root"></div>
 
     <script type="text/babel">
-        const { useState, useEffect, createContext, useContext, useReducer } = React;
+        const { useState, useEffect, createContext, useContext, useRef } = React;
 
         // --- Firebase Configuration ---
-        
-        // Primary Database (Read/Write)
         const primaryFirebaseConfig = {
             apiKey: "AIzaSyArtDGiH3YtVc7Ro43limWa1cCULnVXp4w",
             authDomain: "dlvorders.firebaseapp.com",
@@ -85,8 +83,6 @@
             messagingSenderId: "69353305480",
             appId: "1:69353305480:web:582133ff862edbfbb8763d"
         };
-
-        // Secondary Database (Read-Only)
         const secondaryFirebaseConfig = {
             apiKey: "AIzaSyC9Tf7tOlZhYNe6ubDZ7JFJhsMswiimxPw",
             authDomain: "dlv-warehouse-tracker.firebaseapp.com",
@@ -99,39 +95,22 @@
         // --- Firebase Security Rules Documentation ---
         /*
             For Primary Database ('dlvorders'):
-            // These rules allow any anonymously authenticated user to read and write.
-            // This is suitable for an internal tool where access is controlled by the app's PIN system.
             rules_version = '2';
             service cloud.firestore {
               match /databases/{database}/documents {
-                // Allow read/write access to orders and inventory overrides for any user
-                match /orders/{orderId=**} {
+                match /{document=**} {
                   allow read, write: if request.auth != null;
-                }
-                match /public/data/inventory_overrides/{itemId=**} {
-                  allow read, write: if request.auth != null;
-                }
-                // NEW: Allow any authenticated user to manage the users collection.
-                // In a production app with non-anonymous users, this should be restricted to admins.
-                // e.g., allow read, write: if request.auth.token.role == 'admin';
-                // For this app, access control is handled on the client-side by hiding the UI.
-                match /public/data/users/{userId=**} {
-                    allow read, write: if request.auth != null;
                 }
               }
             }
 
             For Secondary Database ('dlv-warehouse-tracker'):
-            // These rules enforce strict read-only access to the specified public data path.
-            // This protects the master data from being altered by this application.
             rules_version = '2';
             service cloud.firestore {
               match /databases/{database}/documents {
-                // Deny all writes by default
                 match /{document=**} {
                   allow write: if false;
                 }
-                // Allow read access only to the specific public data path
                 match /artifacts/default-app-id/public/data/{collection}/{document=**} {
                   allow read: if true;
                 }
@@ -150,44 +129,35 @@
             const [newOrderCount, setNewOrderCount] = useState(0);
             const [users, setUsers] = useState([]);
 
-            // Initialize Firebase connections
             useEffect(() => {
                 const initializeFirebase = async () => {
                     try {
-                        // Initialize Primary App (dlvorders)
                         const primaryApp = window.initializeApp(primaryFirebaseConfig, "primary");
                         const primaryDb = window.getFirestore(primaryApp);
                         const primaryAuth = window.getAuth(primaryApp);
                         await window.signInAnonymously(primaryAuth);
 
-                        // Initialize Secondary App (dlv-warehouse-tracker)
                         const secondaryApp = window.initializeApp(secondaryFirebaseConfig, "secondary");
                         const secondaryDb = window.getFirestore(secondaryApp);
 
                         setFirebaseInstances({ primaryDb, secondaryDb });
                     } catch (error) {
                         console.error("Firebase Initialization Error:", error);
-                        setModal({ isOpen: true, message: `Failed to connect to databases. Please check console for details. Error: ${error.message}` });
+                        setModal({ isOpen: true, message: `Failed to connect to databases. Error: ${error.message}` });
                     } finally {
                         setLoading(false);
                     }
                 };
-
                 initializeFirebase();
             }, []);
 
-            // Fetch users from Firestore in real-time
             useEffect(() => {
                 if (!firebaseInstances) return;
-
                 const usersCol = window.collection(firebaseInstances.primaryDb, '/public/data/users');
                 const unsubscribe = window.onSnapshot(usersCol, (snapshot) => {
                     const usersData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
                     setUsers(usersData);
-
-                    // Seed initial data if collection is empty
                     if (snapshot.empty) {
-                        console.log("No users found in Firestore. Seeding initial data...");
                         const defaultUsers = [
                             { username: 'Admin', pin: '1234', role: 'admin' },
                             { username: 'Warehouse', pin: '5678', role: 'warehouse' },
@@ -200,18 +170,11 @@
                         });
                         batch.commit().catch(err => console.error("Error seeding users:", err));
                     }
-
                 }, (error) => {
                     console.error("Error fetching users:", error);
-                    if (error.code === 'permission-denied') {
-                        showModal("Could not load user accounts due to a permissions issue. Please update the security rules for the 'dlvorders' project in your Firebase Console and refresh the page.");
-                    } else {
-                        showModal("Could not load user accounts from the database.");
-                    }
+                    showModal("Could not load user accounts from the database.");
                 });
-
                 return () => unsubscribe();
-
             }, [firebaseInstances]);
 
             const login = (username, pin) => {
@@ -228,91 +191,43 @@
             const logout = () => {
                 setUser(null);
                 sessionStorage.removeItem('dlv_user');
-                sessionStorage.removeItem('dlv_cart'); // Clear cart on logout
+                sessionStorage.removeItem('dlv_cart');
             };
             
-            // Check for persisted session on load
             useEffect(() => {
                 try {
                     const savedUserJSON = sessionStorage.getItem('dlv_user');
                     if (savedUserJSON) {
                         const savedUser = JSON.parse(savedUserJSON);
-                        // Re-validate user against the fresh list from Firestore
                         const currentUserInDb = users.find(u => u.id === savedUser.id);
-                        if(currentUserInDb) {
-                            setUser(currentUserInDb);
-                        } else {
-                            // User was deleted while session was active
-                            logout();
-                        }
+                        if(currentUserInDb) setUser(currentUserInDb); else logout();
                     }
-                } catch (error) {
-                    console.error("Error reading user session:", error);
-                }
-            }, [users]); // Rerun when users list is updated
+                } catch (error) { console.error("Error reading user session:", error); }
+            }, [users]);
 
+            const showModal = (message, onConfirm = null) => setModal({ isOpen: true, message, onConfirm });
+            const closeModal = () => setModal({ isOpen: false, message: '', onConfirm: null });
 
-            const showModal = (message, onConfirm = null) => {
-                setModal({ isOpen: true, message, onConfirm });
-            };
-
-            const closeModal = () => {
-                setModal({ isOpen: false, message: '', onConfirm: null });
-            };
-
-            const value = {
-                user,
-                users,
-                login,
-                logout,
-                loading,
-                firebaseInstances,
-                modal,
-                showModal,
-                closeModal,
-                newOrderCount,
-                setNewOrderCount
-            };
-
+            const value = { user, users, login, logout, loading, firebaseInstances, modal, showModal, closeModal, newOrderCount, setNewOrderCount };
             return <AppContext.Provider value={value}>{children}</AppContext.Provider>;
         };
 
-        // --- Custom Hooks ---
         const useAppContext = () => useContext(AppContext);
-
-        // --- UI Components ---
 
         const Modal = () => {
             const { modal, closeModal } = useAppContext();
-
             if (!modal.isOpen) return null;
-
             const handleConfirm = () => {
-                if (modal.onConfirm) {
-                    modal.onConfirm();
-                }
+                if (modal.onConfirm) modal.onConfirm();
                 closeModal();
             };
-
             return (
                 <div className="modal-overlay">
                     <div className="modal-content text-center">
                         <p className="mb-6 text-lg">{modal.message}</p>
                         <div className="flex justify-center space-x-4">
-                            {modal.onConfirm && (
-                                <button
-                                    onClick={closeModal}
-                                    className="px-6 py-2 rounded-md bg-gray-200 text-gray-800 hover:bg-gray-300 transition-colors"
-                                >
-                                    Cancel
-                                </button>
-                            )}
-                            <button
-                                onClick={handleConfirm}
-                                className="px-6 py-2 rounded-md bg-blue-600 text-white hover:bg-blue-700 transition-colors"
-                            >
-                                OK
-                            </button>
+                            {modal.onConfirm && <button onClick={closeModal} className="px-6 py-2 rounded-md bg-gray-200 text-gray-800 hover:bg-gray-300">Cancel</button>}
+                            <button onClick={handleConfirm} className="px-6 py-2 rounded-md bg-blue-600 text-white hover:bg-blue-700">OK</button>
                         </div>
                     </div>
                 </div>
@@ -328,16 +243,15 @@
 
         const Header = () => {
             const { user, logout } = useAppContext();
-
             return (
-                <header className="bg-white shadow-md p-4 flex justify-between items-center">
+                <header className="bg-white shadow-md p-4 flex flex-col sm:flex-row justify-between items-center space-y-2 sm:space-y-0">
                     <img src="https://i.imgur.com/pmh9SN0.png" alt="DLV Order Hub Logo" className="h-10" />
                     {user && (
-                        <div className="flex items-center space-x-4">
-                            <span className="text-gray-600">Welcome, <span className="font-semibold">{user.username}</span> ({user.role})</span>
-                            <button onClick={logout} className="px-4 py-2 bg-red-500 text-white rounded-md hover:bg-red-600 transition-colors">
-                                Logout
-                            </button>
+                        <div className="flex flex-col sm:flex-row items-center space-y-2 sm:space-y-0 sm:space-x-4">
+                            <span className="text-gray-600 text-center sm:text-left">Welcome, <span className="font-semibold">{user.username}</span> ({user.role})</span>
+                            <div className="flex space-x-2">
+                                <button onClick={logout} className="px-4 py-2 bg-red-500 text-white rounded-md hover:bg-red-600 transition-colors">Logout</button>
+                            </div>
                         </div>
                     )}
                 </header>
@@ -346,59 +260,38 @@
         
         const Nav = ({ setCurrentPage }) => {
             const { user, newOrderCount, setNewOrderCount } = useAppContext();
-
             const handleNavClick = (page) => {
-                if(page === 'order_management') {
-                    setNewOrderCount(0);
-                }
+                if(page === 'order_management') setNewOrderCount(0);
                 setCurrentPage(page);
             }
-
             if (!user) return null;
-
             return (
                 <nav className="bg-gray-800 text-white p-4">
-                    <ul className="flex space-x-6">
+                    <ul className="flex flex-wrap justify-center sm:justify-start space-x-4 sm:space-x-6">
                         {(user.role === 'orderer' || user.role === 'admin') && (
                             <>
                                 <li><button onClick={() => handleNavClick('inventory')} className="hover:text-blue-300">Inventory</button></li>
                                 <li><button onClick={() => handleNavClick('cart')} className="hover:text-blue-300">Cart</button></li>
                                 <li><button onClick={() => handleNavClick('order_history')} className="hover:text-blue-300">Order History</button></li>
+                                <li><button onClick={() => handleNavClick('tools')} className="hover:text-blue-300">Tools</button></li>
                             </>
                         )}
                         {(user.role === 'warehouse' || user.role === 'admin') && (
                             <li>
                                 <button onClick={() => handleNavClick('order_management')} className="hover:text-blue-300 flex items-center">
                                     Order Management
-                                    {newOrderCount > 0 && (
-                                        <span className="ml-2 bg-red-500 text-white text-xs font-bold rounded-full h-5 w-5 flex items-center justify-center">
-                                            {newOrderCount}
-                                        </span>
-                                    )}
+                                    {newOrderCount > 0 && <span className="ml-2 bg-red-500 text-white text-xs font-bold rounded-full h-5 w-5 flex items-center justify-center">{newOrderCount}</span>}
                                 </button>
                             </li>
                         )}
                         {user.role === 'admin' && (
-                             <li><button onClick={() => handleNavClick('user_management')} className="hover:text-blue-300">User Management</button></li>
+                             <>
+                                <li><button onClick={() => handleNavClick('user_management')} className="hover:text-blue-300">User Management</button></li>
+                                <li><button onClick={() => handleNavClick('tools_management')} className="hover:text-blue-300">Tools Management</button></li>
+                             </>
                         )}
                     </ul>
                 </nav>
-            );
-        };
-
-        // --- Page Components ---
-
-        const WelcomePage = ({ onVideoEnd }) => {
-            return (
-                <div className="fixed inset-0 w-screen h-screen bg-black overflow-hidden">
-                    <video 
-                        src="https://i.imgur.com/kvu8x9r.mp4" 
-                        autoPlay 
-                        muted 
-                        onEnded={onVideoEnd}
-                        className="absolute top-0 left-0 w-full h-full object-cover z-0"
-                    ></video>
-                </div>
             );
         };
 
@@ -406,7 +299,6 @@
             const [username, setUsername] = useState('');
             const [pin, setPin] = useState('');
             const { login, showModal } = useAppContext();
-
             const handleLogin = (e) => {
                 e.preventDefault();
                 if (pin.length !== 4 || !/^\d{4}$/.test(pin)) {
@@ -415,56 +307,552 @@
                 }
                 login(username, pin);
             };
-
             return (
-                <div className="flex items-center justify-center min-h-screen bg-gray-100">
+                <div className="flex items-center justify-center min-h-screen bg-gray-100 p-4">
                     <div className="p-8 bg-white rounded-lg shadow-xl w-full max-w-md">
-                        <div className="flex justify-center mb-6">
-                            <img src="https://i.imgur.com/pmh9SN0.png" alt="DLV Order Hub Logo" className="h-12" />
-                        </div>
+                        <div className="flex justify-center mb-6"><img src="https://i.imgur.com/pmh9SN0.png" alt="DLV Order Hub Logo" className="h-12" /></div>
                         <h2 className="text-2xl font-bold mb-6 text-center text-gray-700">Login</h2>
                         <form onSubmit={handleLogin}>
                             <div className="mb-4">
-                                <label className="block text-gray-700 text-sm font-bold mb-2" htmlFor="username">
-                                    Username
-                                </label>
-                                <input
-                                    id="username"
-                                    type="text"
-                                    value={username}
-                                    onChange={(e) => setUsername(e.target.value)}
-                                    className="shadow appearance-none border rounded w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:shadow-outline"
-                                    required
-                                />
+                                <label className="block text-gray-700 text-sm font-bold mb-2" htmlFor="username">Username</label>
+                                <input id="username" type="text" value={username} onChange={(e) => setUsername(e.target.value)} className="shadow appearance-none border rounded w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:shadow-outline" required />
                             </div>
                             <div className="mb-6">
-                                <label className="block text-gray-700 text-sm font-bold mb-2" htmlFor="pin">
-                                    4-Digit PIN
-                                </label>
-                                <input
-                                    id="pin"
-                                    type="password"
-                                    maxLength="4"
-                                    value={pin}
-                                    onChange={(e) => setPin(e.target.value.replace(/\D/,''))}
-                                    className="shadow appearance-none border rounded w-full py-2 px-3 text-gray-700 mb-3 leading-tight focus:outline-none focus:shadow-outline"
-                                    required
-                                />
+                                <label className="block text-gray-700 text-sm font-bold mb-2" htmlFor="pin">4-Digit PIN</label>
+                                <input id="pin" type="password" maxLength="4" value={pin} onChange={(e) => setPin(e.target.value.replace(/\D/,''))} className="shadow appearance-none border rounded w-full py-2 px-3 text-gray-700 mb-3 leading-tight focus:outline-none focus:shadow-outline" required />
                             </div>
                             <div className="flex items-center justify-center">
-                                <button
-                                    type="submit"
-                                    className="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-lg focus:outline-none focus:shadow-outline w-full transition-colors"
-                                >
-                                    Sign In
-                                </button>
+                                <button type="submit" className="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-lg focus:outline-none focus:shadow-outline w-full transition-colors">Sign In</button>
                             </div>
                         </form>
                     </div>
                 </div>
             );
         };
+        
+        // --- PAGES --- //
+        const InventoryPage = () => {
+            const { user, firebaseInstances, showModal } = useAppContext();
+            const [inventory, setInventory] = useState([]);
+            const [loading, setLoading] = useState(true);
+            const [searchTerm, setSearchTerm] = useState("");
+            const [customImages, setCustomImages] = useState({});
+            const [cart, setCart] = useState(() => {
+                try {
+                    const savedCart = sessionStorage.getItem('dlv_cart');
+                    return savedCart ? JSON.parse(savedCart) : {};
+                } catch { return {}; }
+            });
 
+            useEffect(() => {
+                if (!firebaseInstances) return;
+                const fetchData = async () => {
+                    setLoading(true);
+                    try {
+                        const inventoryCol = window.collection(firebaseInstances.secondaryDb, '/artifacts/default-app-id/public/data/inventory');
+                        const inventorySnapshot = await window.getDocs(inventoryCol);
+                        const inventoryList = inventorySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+                        setInventory(inventoryList);
+                        const imagesCol = window.collection(firebaseInstances.primaryDb, '/public/data/inventory_overrides');
+                        const imagesSnapshot = await window.getDocs(imagesCol);
+                        const imageMap = {};
+                        imagesSnapshot.forEach(doc => { imageMap[doc.id] = doc.data().imageUrl; });
+                        setCustomImages(imageMap);
+                    } catch (error) {
+                        console.error("Error fetching inventory:", error);
+                        showModal("Failed to load inventory data.");
+                    } finally {
+                        setLoading(false);
+                    }
+                };
+                fetchData();
+            }, [firebaseInstances]);
+
+            useEffect(() => {
+                sessionStorage.setItem('dlv_cart', JSON.stringify(cart));
+            }, [cart]);
+
+            const handleAddToCart = (item, quantity) => {
+                if (quantity <= 0) return;
+                setCart(prevCart => {
+                    const existingItem = prevCart[item.id];
+                    return { ...prevCart, [item.id]: { ...item, quantity: (existingItem ? existingItem.quantity : 0) + quantity }};
+                });
+                showModal(`${quantity} x ${item.name} added to cart.`);
+            };
+
+            const handleAddPicture = async (itemId) => {
+                const imageUrl = prompt("Enter the new image URL:");
+                if (imageUrl) {
+                    try {
+                        const docRef = window.doc(firebaseInstances.primaryDb, `/public/data/inventory_overrides/${itemId}`);
+                        await window.setDoc(docRef, { imageUrl });
+                        setCustomImages(prev => ({...prev, [itemId]: imageUrl}));
+                        showModal("Custom image updated successfully!");
+                    } catch (error) {
+                        console.error("Error updating image URL:", error);
+                        showModal("Failed to update image URL.");
+                    }
+                }
+            };
+            
+            const filteredInventory = inventory.filter(item => 
+                (item.name && item.name.toLowerCase().includes(searchTerm.toLowerCase())) ||
+                (item.description && item.description.toLowerCase().includes(searchTerm.toLowerCase()))
+            );
+
+            if (loading) return <LoadingSpinner message="Loading Inventory..." />;
+
+            return (
+                <div className="p-4 sm:p-8">
+                    <h2 className="text-3xl font-bold mb-6">Inventory</h2>
+                    <input type="text" placeholder="Search inventory..." className="w-full p-3 mb-6 border rounded-lg shadow-sm" value={searchTerm} onChange={e => setSearchTerm(e.target.value)} />
+                    <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-6">
+                        {filteredInventory.map((item, index) => (
+                            <div key={item.id} className="bg-white rounded-lg shadow-lg overflow-hidden flex flex-col">
+                                <img src={customImages[item.id] || 'https://placehold.co/400x300/e2e8f0/cbd5e0?text=No+Image'} alt={item.name} className="w-full h-48 object-cover" onError={(e) => { e.target.onerror = null; e.target.src='https://placehold.co/400x300/e2e8f0/cbd5e0?text=Image+Error'; }} />
+                                <div className="p-4 flex flex-col flex-grow">
+                                    <h3 className="text-xl font-bold">{item.name}</h3>
+                                    <p className="text-gray-600 mt-2 flex-grow">{item.description}</p>
+                                    <div className="mt-4">
+                                        <form onSubmit={(e) => {
+                                            e.preventDefault();
+                                            const quantity = parseInt(e.target.elements.quantity.value);
+                                            handleAddToCart(item, quantity);
+                                            e.target.elements.quantity.value = 1;
+                                        }} className="flex items-center space-x-2">
+                                            <input type="number" name="quantity" defaultValue="1" min="1" className="w-16 p-2 border rounded" />
+                                            <button type="submit" className="flex-1 bg-blue-600 text-white p-2 rounded hover:bg-blue-700">Add to Cart</button>
+                                        </form>
+                                        {user.role === 'admin' && <button onClick={() => handleAddPicture(item.id)} className="w-full mt-2 bg-yellow-500 text-white p-2 rounded hover:bg-yellow-600">Add Picture</button>}
+                                    </div>
+                                </div>
+                            </div>
+                        ))}
+                    </div>
+                </div>
+            );
+        };
+
+        const CartPage = ({ setCurrentPage }) => {
+            const { user, firebaseInstances, showModal } = useAppContext();
+            const [cart, setCart] = useState(() => {
+                try {
+                    const savedCart = sessionStorage.getItem('dlv_cart');
+                    return savedCart ? JSON.parse(savedCart) : {};
+                } catch { return {}; }
+            });
+            const [sites, setSites] = useState([]);
+            const [selectedSite, setSelectedSite] = useState('');
+            const [specialRequests, setSpecialRequests] = useState('');
+            const [isPlacingOrder, setIsPlacingOrder] = useState(false);
+            
+            useEffect(() => {
+                if (!firebaseInstances) return;
+                const fetchSites = async () => {
+                    try {
+                        const sitesCol = window.collection(firebaseInstances.secondaryDb, '/artifacts/default-app-id/public/data/sites');
+                        const sitesSnapshot = await window.getDocs(sitesCol);
+                        setSites(sitesSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+                    } catch (error) {
+                        console.error("Error fetching sites:", error);
+                    }
+                };
+                fetchSites();
+            }, [firebaseInstances]);
+
+            const updateQuantity = (itemId, newQuantity) => {
+                if (newQuantity <= 0) {
+                    removeItem(itemId);
+                    return;
+                }
+                const newCart = { ...cart };
+                newCart[itemId].quantity = newQuantity;
+                setCart(newCart);
+                sessionStorage.setItem('dlv_cart', JSON.stringify(newCart));
+            };
+
+            const removeItem = (itemId) => {
+                const newCart = { ...cart };
+                delete newCart[itemId];
+                setCart(newCart);
+                sessionStorage.setItem('dlv_cart', JSON.stringify(newCart));
+            };
+
+            const handlePlaceOrder = async () => {
+                if (Object.keys(cart).length === 0) {
+                    showModal("Your cart is empty.");
+                    return;
+                }
+                if (!selectedSite) {
+                    showModal("Please select a project site.");
+                    return;
+                }
+                
+                setIsPlacingOrder(true);
+                try {
+                    const orderData = {
+                        userId: user.id, username: user.username, siteId: selectedSite,
+                        siteName: sites.find(s => s.id === selectedSite)?.name || 'Unknown Site',
+                        specialRequests, status: 'Pending', createdAt: window.serverTimestamp(),
+                        items: Object.values(cart).map(item => ({ id: item.id, name: item.name, quantity: item.quantity, status: 'Pending' })),
+                        communication: []
+                    };
+                    const ordersCol = window.collection(firebaseInstances.primaryDb, 'orders');
+                    await window.addDoc(ordersCol, orderData);
+                    setCart({});
+                    sessionStorage.removeItem('dlv_cart');
+                    showModal("Order placed successfully!", () => {
+                        setCurrentPage('order_history');
+                    });
+                } catch (error) {
+                    console.error("Error placing order:", error);
+                    showModal(`Failed to place order. Error: ${error.message}`);
+                } finally {
+                    setIsPlacingOrder(false);
+                }
+            };
+            
+            const cartItems = Object.values(cart);
+
+            return (
+                <div className="p-4 sm:p-8">
+                    <h2 className="text-3xl font-bold mb-6">Shopping Cart</h2>
+                    {cartItems.length === 0 ? (
+                        <p className="text-center text-gray-500 text-xl">Your cart is empty.</p>
+                    ) : (
+                        <div className="bg-white p-6 rounded-lg shadow-md">
+                            {cartItems.map(item => (
+                                <div key={item.id} className="flex flex-col sm:flex-row items-start sm:items-center justify-between py-4 border-b">
+                                    <span className="font-semibold w-full sm:w-1/2 mb-2 sm:mb-0">{item.name}</span>
+                                    <div className="flex items-center space-x-4">
+                                        <input type="number" value={item.quantity} onChange={e => updateQuantity(item.id, parseInt(e.target.value))} className="w-20 p-1 border rounded text-center" />
+                                        <button onClick={() => removeItem(item.id)} className="text-red-500 hover:text-red-700">Remove</button>
+                                    </div>
+                                </div>
+                            ))}
+                            <div className="mt-6">
+                                <h3 className="text-xl font-semibold mb-4">Order Details</h3>
+                                <div className="mb-4">
+                                    <label className="block text-gray-700 font-bold mb-2">Project Site</label>
+                                    <select value={selectedSite} onChange={e => setSelectedSite(e.target.value)} className="w-full p-2 border rounded bg-white">
+                                        <option value="" disabled>Select a site</option>
+                                        {sites.map(site => <option key={site.id} value={site.id}>{site.name}</option>)}
+                                    </select>
+                                </div>
+                                <div className="mb-4">
+                                    <label className="block text-gray-700 font-bold mb-2">Special Requests</label>
+                                    <textarea value={specialRequests} onChange={e => setSpecialRequests(e.target.value)} className="w-full p-2 border rounded" rows="3"></textarea>
+                                </div>
+                                <button onClick={handlePlaceOrder} disabled={isPlacingOrder} className="w-full bg-green-600 text-white p-3 rounded-lg font-bold hover:bg-green-700 disabled:bg-gray-400">
+                                    {isPlacingOrder ? 'Placing Order...' : 'Place Order'}
+                                </button>
+                            </div>
+                        </div>
+                    )}
+                </div>
+            );
+        };
+
+        const OrderHistoryPage = () => {
+            const { user, firebaseInstances, showModal } = useAppContext();
+            const [orders, setOrders] = useState([]);
+            const [loading, setLoading] = useState(true);
+            const [selectedOrder, setSelectedOrder] = useState(null);
+            const [newMessage, setNewMessage] = useState("");
+
+            useEffect(() => {
+                if (!firebaseInstances || !user) return;
+                setLoading(true);
+                const q = window.query(window.collection(firebaseInstances.primaryDb, "orders"), window.where("userId", "==", user.id));
+                const unsubscribe = window.onSnapshot(q, (querySnapshot) => {
+                    const ordersData = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })).sort((a, b) => (b.createdAt?.seconds || 0) - (a.createdAt?.seconds || 0));
+                    setOrders(ordersData);
+                    setLoading(false);
+                }, (error) => {
+                    console.error("Error fetching order history:", error);
+                    showModal("Failed to load order history.");
+                    setLoading(false);
+                });
+                return () => unsubscribe();
+            }, [firebaseInstances, user]);
+            
+            const handleSendMessage = async () => {
+                if (!newMessage.trim() || !selectedOrder) return;
+                const updatedCommunication = [
+                    ...(selectedOrder.communication || []),
+                    { sender: user.username, message: newMessage, timestamp: new Date() }
+                ];
+                try {
+                    const orderRef = window.doc(firebaseInstances.primaryDb, 'orders', selectedOrder.id);
+                    await window.updateDoc(orderRef, { communication: updatedCommunication });
+                    setSelectedOrder(prev => ({...prev, communication: updatedCommunication}));
+                    setNewMessage("");
+                } catch (error) {
+                    console.error("Error sending message:", error);
+                    showModal("Failed to send message.");
+                }
+            };
+
+            if (loading) return <LoadingSpinner message="Loading Order History..." />;
+            
+            return (
+                <div className="p-4 sm:p-8 grid grid-cols-1 md:grid-cols-3 gap-8">
+                    <div className="md:col-span-1">
+                        <h2 id="order-history-header" className="text-3xl font-bold mb-6">My Orders</h2>
+                        <div className="bg-white p-4 rounded-lg shadow-md space-y-3 max-h-[70vh] overflow-y-auto">
+                            {orders.length === 0 && <p>You have no orders.</p>}
+                            {orders.map(order => (
+                                <div key={order.id} onClick={() => setSelectedOrder(order)} className={`p-4 border rounded-lg cursor-pointer ${selectedOrder?.id === order.id ? 'bg-blue-100 border-blue-500' : 'hover:bg-gray-50'}`}>
+                                    <p className="font-semibold">Order #{order.id.substring(0, 6)}...</p>
+                                    <p>Site: {order.siteName}</p>
+                                    <p>Status: <span className="font-medium">{order.status}</span></p>
+                                    <p className="text-sm text-gray-500">{order.createdAt?.toDate().toLocaleString()}</p>
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+                    <div className="md:col-span-2 bg-white p-6 rounded-lg shadow-md">
+                        {selectedOrder ? (
+                            <div>
+                                <h3 className="text-2xl font-bold mb-4">Order Details</h3>
+                                <p><span className="font-semibold">Status:</span> {selectedOrder.status}</p>
+                                <p><span className="font-semibold">Site:</span> {selectedOrder.siteName}</p>
+                                <p><span className="font-semibold">Special Requests:</span> {selectedOrder.specialRequests || 'None'}</p>
+                                
+                                <h4 className="text-xl font-semibold mt-6 mb-2">Items</h4>
+                                <ul className="list-disc list-inside space-y-1">
+                                    {selectedOrder.items.map(item => (
+                                        <li key={item.id}>{item.name} (x{item.quantity}) - <span className="italic">{item.status}</span></li>
+                                    ))}
+                                </ul>
+
+                                <h4 className="text-xl font-semibold mt-6 mb-2">Communication</h4>
+                                <div className="border rounded-lg p-4 h-48 overflow-y-auto bg-gray-50 mb-4">
+                                    {(selectedOrder.communication || []).length === 0 && <p className="text-gray-500">No messages yet.</p>}
+                                    {(selectedOrder.communication || []).map((msg, i) => (
+                                        <p key={i}><span className="font-semibold">{msg.sender}:</span> {msg.message}</p>
+                                    ))}
+                                </div>
+                                <div className="flex space-x-2">
+                                    <input type="text" value={newMessage} onChange={e => setNewMessage(e.target.value)} placeholder="Type a follow-up message..." className="flex-grow p-2 border rounded" />
+                                    <button onClick={handleSendMessage} className="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700">Send</button>
+                                </div>
+                            </div>
+                        ) : (
+                            <p className="text-center text-gray-500 text-xl">Select an order to view details.</p>
+                        )}
+                    </div>
+                </div>
+            );
+        };
+        
+        const OrderStatusChecklist = ({ currentStatus, onStatusUpdate }) => {
+            const statuses = ["Processing", "Awaiting Pickup", "In Transit", "Delivered"];
+            const currentIndex = statuses.indexOf(currentStatus);
+
+            return (
+                <div className="w-full">
+                    <div className="flex items-center">
+                        {statuses.map((status, index) => {
+                            const isCompleted = index < currentIndex;
+                            const isCurrent = index === currentIndex;
+                            
+                            const nodeColor = isCompleted || isCurrent ? 'bg-blue-600' : 'bg-gray-300';
+                            const textColor = isCompleted || isCurrent ? 'text-blue-600' : 'text-gray-500';
+                            const lineColor = isCompleted ? 'bg-blue-600' : 'bg-gray-300';
+
+                            return (
+                                <React.Fragment key={status}>
+                                    <div className="flex flex-col items-center cursor-pointer" onClick={() => onStatusUpdate(status)}>
+                                        <div className={`w-6 h-6 rounded-full ${nodeColor} flex items-center justify-center`}>
+                                            {isCompleted && <span className="text-white font-bold text-sm">✓</span>}
+                                        </div>
+                                        <p className={`mt-2 text-sm text-center font-semibold ${textColor}`}>{status}</p>
+                                    </div>
+                                    {index < statuses.length - 1 && (
+                                        <div className={`flex-1 h-1 mx-2 ${lineColor}`}></div>
+                                    )}
+                                </React.Fragment>
+                            );
+                        })}
+                    </div>
+                </div>
+            );
+        };
+
+        const OrderManagementPage = () => {
+            const { user, firebaseInstances, showModal, setNewOrderCount } = useAppContext();
+            const [orders, setOrders] = useState([]);
+            const [loading, setLoading] = useState(true);
+            const [selectedOrder, setSelectedOrder] = useState(null);
+            const [newMessage, setNewMessage] = useState("");
+
+            const ITEM_STATUSES = ["Pending", "Picked", "Out of Stock", "Substituted"];
+
+            useEffect(() => {
+                setNewOrderCount(0);
+            }, []);
+            
+            useEffect(() => {
+                if (!firebaseInstances) return;
+                setLoading(true);
+                const q = window.query(window.collection(firebaseInstances.primaryDb, "orders"));
+                const unsubscribe = window.onSnapshot(q, (querySnapshot) => {
+                    const ordersData = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })).sort((a, b) => (b.createdAt?.seconds || 0) - (a.createdAt?.seconds || 0));
+                    setOrders(ordersData);
+                    setLoading(false);
+                }, (error) => {
+                    console.error("Error fetching orders:", error);
+                     if (error.code === 'permission-denied') {
+                         showModal("Could not load orders due to a permissions issue. Please check the security rules in your Firebase project.");
+                    } else {
+                        showModal("Failed to load orders.");
+                    }
+                    setLoading(false);
+                });
+                return () => unsubscribe();
+            }, [firebaseInstances]);
+
+            useEffect(() => {
+                if (selectedOrder) {
+                    const updatedSelectedOrder = orders.find(o => o.id === selectedOrder.id);
+                    if (updatedSelectedOrder) {
+                        setSelectedOrder(updatedSelectedOrder);
+                    }
+                }
+            }, [orders]);
+            
+            const updateOrderStatus = async (orderId, status) => {
+                try {
+                    const orderRef = window.doc(firebaseInstances.primaryDb, 'orders', orderId);
+                    await window.updateDoc(orderRef, { status });
+                } catch (error) {
+                    console.error("Error updating order status:", error);
+                    showModal("Failed to update order status.");
+                }
+            };
+            
+            const updateItemStatus = async (orderId, itemIndex, status) => {
+                const orderToUpdate = orders.find(o => o.id === orderId);
+                if (!orderToUpdate) return;
+
+                const updatedItems = orderToUpdate.items.map((item, index) => {
+                    if (index === itemIndex) {
+                        return { ...item, status: status };
+                    }
+                    return item;
+                });
+                
+                try {
+                    const orderRef = window.doc(firebaseInstances.primaryDb, 'orders', orderId);
+                    await window.updateDoc(orderRef, { items: updatedItems });
+                } catch (error) {
+                    console.error("Error updating item status:", error);
+                    showModal("Failed to update item status.");
+                }
+            };
+
+            const handleSendMessage = async () => {
+                if (!newMessage.trim() || !selectedOrder) return;
+                const updatedCommunication = [
+                    ...(selectedOrder.communication || []),
+                    { sender: user.username, message: newMessage, timestamp: new Date() }
+                ];
+                try {
+                    const orderRef = window.doc(firebaseInstances.primaryDb, 'orders', selectedOrder.id);
+                    await window.updateDoc(orderRef, { communication: updatedCommunication });
+                    setNewMessage("");
+                } catch (error) {
+                    console.error("Error sending message:", error);
+                    showModal("Failed to send message.");
+                }
+            };
+
+            if (loading) return <LoadingSpinner message="Loading All Orders..." />;
+
+            return (
+                 <div className="p-4 sm:p-8 grid grid-cols-1 md:grid-cols-3 gap-8">
+                    <div className="md:col-span-1">
+                        <h2 className="text-3xl font-bold mb-6">All Orders</h2>
+                        <div className="bg-white p-4 rounded-lg shadow-md space-y-3 max-h-[80vh] overflow-y-auto">
+                            {orders.length === 0 && <p>No orders found.</p>}
+                            {orders.map(order => (
+                                <div key={order.id} onClick={() => setSelectedOrder(order)} className={`p-4 border rounded-lg cursor-pointer ${selectedOrder?.id === order.id ? 'bg-blue-100 border-blue-500' : 'hover:bg-gray-50'}`}>
+                                    <p className="font-semibold">Order #{order.id.substring(0, 6)}... ({order.username})</p>
+                                    <p>Site: {order.siteName}</p>
+                                    <p>Status: <span className="font-medium">{order.status}</span></p>
+                                    <p className="text-sm text-gray-500">{order.createdAt?.toDate().toLocaleString()}</p>
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+                    <div className="md:col-span-2 bg-white p-6 rounded-lg shadow-md">
+                        {selectedOrder ? (
+                            <div>
+                                <h3 className="text-2xl font-bold mb-4">Manage Order #{selectedOrder.id.substring(0, 6)}</h3>
+                                
+                                <div className="mb-6 p-4 border rounded-lg bg-gray-50">
+                                    <label className="block font-semibold mb-3 text-gray-700">Order Progress</label>
+                                    <OrderStatusChecklist 
+                                        currentStatus={selectedOrder.status}
+                                        onStatusUpdate={(newStatus) => updateOrderStatus(selectedOrder.id, newStatus)}
+                                    />
+                                </div>
+
+                                <div className="grid grid-cols-2 gap-4 mb-6">
+                                    <button 
+                                        onClick={() => updateOrderStatus(selectedOrder.id, "Waiting for Supplier")}
+                                        className={`p-2 rounded-lg text-white font-semibold transition-colors ${selectedOrder.status === 'Waiting for Supplier' ? 'bg-orange-500' : 'bg-orange-400 hover:bg-orange-500'}`}
+                                    >
+                                        Set to: Waiting for Supplier
+                                    </button>
+                                    <button 
+                                        onClick={() => updateOrderStatus(selectedOrder.id, "Cancelled")}
+                                        className={`p-2 rounded-lg text-white font-semibold transition-colors ${selectedOrder.status === 'Cancelled' ? 'bg-red-600' : 'bg-red-500 hover:bg-red-600'}`}
+                                    >
+                                       Set to: Cancelled
+                                    </button>
+                                </div>
+
+                                <p className="mb-1"><span className="font-semibold">Orderer:</span> {selectedOrder.username}</p>
+                                <p className="mb-4"><span className="font-semibold">Site:</span> {selectedOrder.siteName}</p>
+                                {selectedOrder.specialRequests && <p className="mb-4 p-3 bg-yellow-100 border border-yellow-200 rounded-lg"><span className="font-semibold">Special Requests:</span> {selectedOrder.specialRequests}</p>}
+                                
+                                <h4 className="text-xl font-semibold mt-6 mb-2">Items</h4>
+                                <div className="space-y-2">
+                                    {selectedOrder.items.map((item, index) => (
+                                        <div key={item.id} className="flex items-center justify-between p-2 bg-gray-50 rounded">
+                                            <span>{item.name} (x{item.quantity})</span>
+                                            <select value={item.status} onChange={e => updateItemStatus(selectedOrder.id, index, e.target.value)} className="p-1 border rounded bg-white">
+                                                {ITEM_STATUSES.map(s => <option key={s} value={s}>{s}</option>)}
+                                            </select>
+                                        </div>
+                                    ))}
+                                </div>
+
+                                <h4 className="text-xl font-semibold mt-6 mb-2">Communication</h4>
+                                <div className="border rounded-lg p-4 h-48 overflow-y-auto bg-gray-50 mb-4">
+                                    {(selectedOrder.communication || []).length === 0 && <p className="text-gray-500">No messages yet.</p>}
+                                    {(selectedOrder.communication || []).map((msg, i) => (
+                                        <p key={i}><span className="font-semibold">{msg.sender}:</span> {msg.message}</p>
+                                    ))}
+                                </div>
+                                <div className="flex space-x-2">
+                                    <input type="text" value={newMessage} onChange={e => setNewMessage(e.target.value)} placeholder="Type a reply..." className="flex-grow p-2 border rounded" />
+                                    <button onClick={handleSendMessage} className="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700">Reply</button>
+                                </div>
+                            </div>
+                        ) : (
+                            <div className="flex items-center justify-center h-full">
+                                <p className="text-center text-gray-500 text-xl">Select an order to manage.</p>
+                            </div>
+                        )}
+                    </div>
+                </div>
+            );
+        };
+        
         const UserManagementPage = () => {
             const { users, firebaseInstances, showModal } = useAppContext();
             const [editingUser, setEditingUser] = useState(null);
@@ -584,629 +972,314 @@
             );
         };
         
-        const InventoryPage = () => {
+        const ToolsPage = () => {
             const { user, firebaseInstances, showModal } = useAppContext();
-            const [inventory, setInventory] = useState([]);
-            const [loading, setLoading] = useState(true);
-            const [searchTerm, setSearchTerm] = useState("");
-            const [customImages, setCustomImages] = useState({});
-            const [cart, setCart] = useState(() => {
-                try {
-                    const savedCart = sessionStorage.getItem('dlv_cart');
-                    return savedCart ? JSON.parse(savedCart) : {};
-                } catch {
-                    return {};
-                }
-            });
-
-            // Fetch data
-            useEffect(() => {
-                if (!firebaseInstances) return;
-                const fetchData = async () => {
-                    setLoading(true);
-                    try {
-                        // Fetch master inventory from secondary DB
-                        const inventoryCol = window.collection(firebaseInstances.secondaryDb, '/artifacts/default-app-id/public/data/inventory');
-                        const inventorySnapshot = await window.getDocs(inventoryCol);
-                        const inventoryList = inventorySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-                        setInventory(inventoryList);
-                        
-                        // Fetch custom images from primary DB
-                        const imagesCol = window.collection(firebaseInstances.primaryDb, '/public/data/inventory_overrides');
-                        const imagesSnapshot = await window.getDocs(imagesCol);
-                        const imageMap = {};
-                        imagesSnapshot.forEach(doc => {
-                            imageMap[doc.id] = doc.data().imageUrl;
-                        });
-                        setCustomImages(imageMap);
-                    } catch (error) {
-                        console.error("Error fetching inventory:", error);
-                        showModal("Failed to load inventory data. Check your secondary DB's security rules.");
-                    } finally {
-                        setLoading(false);
-                    }
-                };
-                fetchData();
-            }, [firebaseInstances]);
-
-            // Persist cart to session storage
-            useEffect(() => {
-                sessionStorage.setItem('dlv_cart', JSON.stringify(cart));
-            }, [cart]);
-
-            const handleAddToCart = (item, quantity) => {
-                if (quantity <= 0) return;
-                setCart(prevCart => {
-                    const existingItem = prevCart[item.id];
-                    return {
-                        ...prevCart,
-                        [item.id]: {
-                            ...item,
-                            quantity: (existingItem ? existingItem.quantity : 0) + quantity
-                        }
-                    };
-                });
-                showModal(`${quantity} x ${item.name} added to cart.`);
-            };
-
-            const handleAddPicture = async (itemId) => {
-                const imageUrl = prompt("Enter the new image URL:");
-                if (imageUrl) {
-                    try {
-                        const docRef = window.doc(firebaseInstances.primaryDb, `/public/data/inventory_overrides/${itemId}`);
-                        await window.setDoc(docRef, { imageUrl });
-                        setCustomImages(prev => ({...prev, [itemId]: imageUrl}));
-                        showModal("Custom image updated successfully!");
-                    } catch (error) {
-                        console.error("Error updating image URL:", error);
-                        showModal("Failed to update image URL. Check your primary DB's security rules.");
-                    }
-                }
-            };
-            
-            const filteredInventory = inventory.filter(item => 
-                (item.name && item.name.toLowerCase().includes(searchTerm.toLowerCase())) ||
-                (item.description && item.description.toLowerCase().includes(searchTerm.toLowerCase()))
-            );
-
-            if (loading) return <LoadingSpinner message="Loading Inventory..." />;
-
-            return (
-                <div className="p-8">
-                    <h2 className="text-3xl font-bold mb-6">Inventory</h2>
-                    <input 
-                        type="text"
-                        placeholder="Search inventory..."
-                        className="w-full p-3 mb-6 border rounded-lg shadow-sm"
-                        value={searchTerm}
-                        onChange={e => setSearchTerm(e.target.value)}
-                    />
-                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
-                        {filteredInventory.map(item => (
-                            <div key={item.id} className="bg-white rounded-lg shadow-lg overflow-hidden flex flex-col">
-                                <img 
-                                    src={customImages[item.id] || 'https://placehold.co/400x300/e2e8f0/cbd5e0?text=No+Image'} 
-                                    alt={item.name} 
-                                    className="w-full h-48 object-cover"
-                                    onError={(e) => { e.target.onerror = null; e.target.src='https://placehold.co/400x300/e2e8f0/cbd5e0?text=Image+Error'; }}
-                                />
-                                <div className="p-4 flex flex-col flex-grow">
-                                    <h3 className="text-xl font-bold">{item.name}</h3>
-                                    <p className="text-gray-600 mt-2 flex-grow">{item.description}</p>
-                                    <div className="mt-4">
-                                        <form onSubmit={(e) => {
-                                            e.preventDefault();
-                                            const quantity = parseInt(e.target.elements.quantity.value);
-                                            handleAddToCart(item, quantity);
-                                            e.target.elements.quantity.value = 1;
-                                        }} className="flex items-center space-x-2">
-                                            <input type="number" name="quantity" defaultValue="1" min="1" className="w-16 p-2 border rounded" />
-                                            <button type="submit" className="flex-1 bg-blue-600 text-white p-2 rounded hover:bg-blue-700">Add to Cart</button>
-                                        </form>
-                                        {user.role === 'admin' && (
-                                            <button onClick={() => handleAddPicture(item.id)} className="w-full mt-2 bg-yellow-500 text-white p-2 rounded hover:bg-yellow-600">
-                                                Add Picture
-                                            </button>
-                                        )}
-                                    </div>
-                                </div>
-                            </div>
-                        ))}
-                    </div>
-                </div>
-            );
-        };
-
-        const CartPage = ({ setCurrentPage }) => {
-            const { user, firebaseInstances, showModal } = useAppContext();
-            const [cart, setCart] = useState(() => {
-                try {
-                    const savedCart = sessionStorage.getItem('dlv_cart');
-                    return savedCart ? JSON.parse(savedCart) : {};
-                } catch { return {}; }
-            });
+            const [tools, setTools] = useState([]);
             const [sites, setSites] = useState([]);
-            const [selectedSite, setSelectedSite] = useState('');
-            const [specialRequests, setSpecialRequests] = useState('');
-            const [isPlacingOrder, setIsPlacingOrder] = useState(false);
+            const [loading, setLoading] = useState(true);
 
             useEffect(() => {
                 if (!firebaseInstances) return;
+                const toolsCol = window.collection(firebaseInstances.primaryDb, '/public/data/tools');
+                const unsubscribe = window.onSnapshot(toolsCol, (snapshot) => {
+                    const toolsData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+                    setTools(toolsData);
+                    setLoading(false);
+                }, (error) => {
+                    console.error("Error fetching tools:", error);
+                    showModal("Failed to load tools. Please check Firebase rules.");
+                    setLoading(false);
+                });
+
                 const fetchSites = async () => {
                     try {
                         const sitesCol = window.collection(firebaseInstances.secondaryDb, '/artifacts/default-app-id/public/data/sites');
                         const sitesSnapshot = await window.getDocs(sitesCol);
-                        const sitesList = sitesSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-                        setSites(sitesList);
-                        if(sitesList.length > 0) {
-                            setSelectedSite(sitesList[0].id);
-                        }
+                        setSites(sitesSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
                     } catch (error) {
                         console.error("Error fetching sites:", error);
-                        showModal("Failed to load project sites.");
                     }
                 };
                 fetchSites();
+
+                return () => unsubscribe();
             }, [firebaseInstances]);
 
-            const updateQuantity = (itemId, newQuantity) => {
-                if (newQuantity <= 0) {
-                    removeItem(itemId);
+            const handleBorrow = async (toolId) => {
+                if (sites.length === 0) {
+                    showModal("Project sites are not loaded yet. Please try again in a moment.");
                     return;
                 }
-                const newCart = { ...cart };
-                newCart[itemId].quantity = newQuantity;
-                setCart(newCart);
-                sessionStorage.setItem('dlv_cart', JSON.stringify(newCart));
-            };
-
-            const removeItem = (itemId) => {
-                const newCart = { ...cart };
-                delete newCart[itemId];
-                setCart(newCart);
-                sessionStorage.setItem('dlv_cart', JSON.stringify(newCart));
-            };
-
-            const handlePlaceOrder = async () => {
-                if (Object.keys(cart).length === 0) {
-                    showModal("Your cart is empty.");
-                    return;
-                }
-                if (!selectedSite) {
-                    showModal("Please select a project site.");
-                    return;
-                }
-                
-                setIsPlacingOrder(true);
-                try {
-                    const orderData = {
-                        userId: user.id,
-                        username: user.username,
-                        siteId: selectedSite,
-                        siteName: sites.find(s => s.id === selectedSite)?.name || 'Unknown Site',
-                        specialRequests,
-                        status: 'Pending',
-                        createdAt: window.serverTimestamp(),
-                        items: Object.values(cart).map(item => ({
-                            id: item.id,
-                            name: item.name,
-                            quantity: item.quantity,
-                            status: 'Pending'
-                        })),
-                        communication: []
-                    };
-                    
-                    const ordersCol = window.collection(firebaseInstances.primaryDb, 'orders');
-                    await window.addDoc(ordersCol, orderData);
-
-                    setCart({});
-                    sessionStorage.removeItem('dlv_cart');
-                    showModal("Order placed successfully!", () => {
-                        setCurrentPage('order_history');
-                    });
-
-                } catch (error) {
-                    console.error("Error placing order:", error);
-                    if (error.code === 'permission-denied') {
-                        showModal("Order failed: Permission Denied. Please ensure the Firebase security rules for the 'dlvorders' project are set correctly in the Firebase Console.");
-                    } else {
-                        showModal(`Failed to place order. Error: ${error.message}`);
+                const siteId = prompt("Enter the Project Site ID for this tool:", sites[0]?.id || "");
+                if (siteId) {
+                    const site = sites.find(s => s.id === siteId);
+                    if (!site) {
+                        showModal("Invalid Site ID.");
+                        return;
                     }
-                } finally {
-                    setIsPlacingOrder(false);
+                    try {
+                        const toolRef = window.doc(firebaseInstances.primaryDb, '/public/data/tools', toolId);
+                        await window.updateDoc(toolRef, {
+                            status: 'Hiram',
+                            borrowedBy: user.username,
+                            siteName: site.name,
+                            borrowedDate: window.serverTimestamp()
+                        });
+                        showModal("Tool borrowed successfully!");
+                    } catch (error) {
+                        console.error("Error borrowing tool:", error);
+                        showModal("Failed to borrow tool.");
+                    }
                 }
             };
-            
-            const cartItems = Object.values(cart);
+
+            if (loading) return <LoadingSpinner message="Loading Tools..." />;
 
             return (
-                <div className="p-8">
-                    <h2 className="text-3xl font-bold mb-6">Shopping Cart</h2>
-                    {cartItems.length === 0 ? (
-                        <p className="text-center text-gray-500 text-xl">Your cart is empty.</p>
-                    ) : (
-                        <div className="bg-white p-6 rounded-lg shadow-md">
-                            {cartItems.map(item => (
-                                <div key={item.id} className="flex items-center justify-between py-4 border-b">
-                                    <span className="font-semibold w-1/2">{item.name}</span>
-                                    <input type="number" value={item.quantity} onChange={e => updateQuantity(item.id, parseInt(e.target.value))} className="w-20 p-1 border rounded text-center" />
-                                    <button onClick={() => removeItem(item.id)} className="text-red-500 hover:text-red-700">Remove</button>
-                                </div>
-                            ))}
-                            <div className="mt-6">
-                                <h3 className="text-xl font-semibold mb-4">Order Details</h3>
-                                <div className="mb-4">
-                                    <label className="block text-gray-700 font-bold mb-2">Project Site</label>
-                                    <select value={selectedSite} onChange={e => setSelectedSite(e.target.value)} className="w-full p-2 border rounded bg-white">
-                                        <option value="" disabled>Select a site</option>
-                                        {sites.map(site => <option key={site.id} value={site.id}>{site.name}</option>)}
-                                    </select>
-                                </div>
-                                <div className="mb-4">
-                                    <label className="block text-gray-700 font-bold mb-2">Special Requests</label>
-                                    <textarea value={specialRequests} onChange={e => setSpecialRequests(e.target.value)} className="w-full p-2 border rounded" rows="3"></textarea>
-                                </div>
-                                <button onClick={handlePlaceOrder} disabled={isPlacingOrder} className="w-full bg-green-600 text-white p-3 rounded-lg font-bold hover:bg-green-700 disabled:bg-gray-400">
-                                    {isPlacingOrder ? 'Placing Order...' : 'Place Order'}
-                                </button>
-                            </div>
-                        </div>
-                    )}
-                </div>
-            );
-        };
-        
-        const OrderHistoryPage = () => {
-            const { user, firebaseInstances, showModal } = useAppContext();
-            const [orders, setOrders] = useState([]);
-            const [loading, setLoading] = useState(true);
-            const [selectedOrder, setSelectedOrder] = useState(null);
-            const [newMessage, setNewMessage] = useState("");
-
-            useEffect(() => {
-                if (!firebaseInstances || !user) return;
-                setLoading(true);
-                const q = window.query(window.collection(firebaseInstances.primaryDb, "orders"), window.where("userId", "==", user.id));
-                const unsubscribe = window.onSnapshot(q, (querySnapshot) => {
-                    const ordersData = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })).sort((a, b) => (b.createdAt?.seconds || 0) - (a.createdAt?.seconds || 0));
-                    setOrders(ordersData);
-                    setLoading(false);
-                }, (error) => {
-                    console.error("Error fetching order history:", error);
-                    if (error.code === 'permission-denied') {
-                         showModal("Could not load order history due to a permissions issue. Please check the security rules in your Firebase project.");
-                    } else {
-                        showModal("Failed to load order history.");
-                    }
-                    setLoading(false);
-                });
-                return () => unsubscribe();
-            }, [firebaseInstances, user]);
-            
-            const handleSendMessage = async () => {
-                if (!newMessage.trim() || !selectedOrder) return;
-                const updatedCommunication = [
-                    ...(selectedOrder.communication || []),
-                    { sender: user.username, message: newMessage, timestamp: new Date() }
-                ];
-                try {
-                    const orderRef = window.doc(firebaseInstances.primaryDb, 'orders', selectedOrder.id);
-                    await window.updateDoc(orderRef, { communication: updatedCommunication });
-                    setSelectedOrder(prev => ({...prev, communication: updatedCommunication}));
-                    setNewMessage("");
-                } catch (error) {
-                    console.error("Error sending message:", error);
-                    showModal("Failed to send message.");
-                }
-            };
-
-            if (loading) return <LoadingSpinner message="Loading Order History..." />;
-            
-            return (
-                <div className="p-8 grid grid-cols-1 md:grid-cols-3 gap-8">
-                    <div className="md:col-span-1">
-                        <h2 className="text-3xl font-bold mb-6">My Orders</h2>
-                        <div className="bg-white p-4 rounded-lg shadow-md space-y-3 max-h-[70vh] overflow-y-auto">
-                            {orders.length === 0 && <p>You have no orders.</p>}
-                            {orders.map(order => (
-                                <div key={order.id} onClick={() => setSelectedOrder(order)} className={`p-4 border rounded-lg cursor-pointer ${selectedOrder?.id === order.id ? 'bg-blue-100 border-blue-500' : 'hover:bg-gray-50'}`}>
-                                    <p className="font-semibold">Order #{order.id.substring(0, 6)}...</p>
-                                    <p>Site: {order.siteName}</p>
-                                    <p>Status: <span className="font-medium">{order.status}</span></p>
-                                    <p className="text-sm text-gray-500">{order.createdAt?.toDate().toLocaleString()}</p>
-                                </div>
-                            ))}
+                <div className="p-4 sm:p-8">
+                    <h2 className="text-3xl font-bold mb-6">Tools Library</h2>
+                    <div className="bg-white p-6 rounded-lg shadow-md">
+                        <div className="overflow-x-auto">
+                            <table className="min-w-full">
+                                <thead className="bg-gray-200">
+                                    <tr>
+                                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Tool Name</th>
+                                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
+                                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Borrowed By</th>
+                                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Current Site</th>
+                                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Action</th>
+                                    </tr>
+                                </thead>
+                                <tbody className="bg-white divide-y divide-gray-200">
+                                    {tools.map(tool => (
+                                        <tr key={tool.id}>
+                                            <td className="px-6 py-4 whitespace-nowrap font-medium">{tool.name}</td>
+                                            <td className="px-6 py-4 whitespace-nowrap">
+                                                <span className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${tool.status === 'Available' ? 'bg-green-100 text-green-800' : 'bg-yellow-100 text-yellow-800'}`}>
+                                                    {tool.status}
+                                                </span>
+                                            </td>
+                                            <td className="px-6 py-4 whitespace-nowrap">{tool.borrowedBy || 'N/A'}</td>
+                                            <td className="px-6 py-4 whitespace-nowrap">{tool.siteName || tool.homeSiteName || 'N/A'}</td>
+                                            <td className="px-6 py-4 whitespace-nowrap">
+                                                {tool.status === 'Available' && (
+                                                    <button onClick={() => handleBorrow(tool.id)} className="bg-blue-500 text-white px-3 py-1 rounded hover:bg-blue-600">Hiramin</button>
+                                                )}
+                                            </td>
+                                        </tr>
+                                    ))}
+                                </tbody>
+                            </table>
                         </div>
                     </div>
-                    <div className="md:col-span-2 bg-white p-6 rounded-lg shadow-md">
-                        {selectedOrder ? (
-                            <div>
-                                <h3 className="text-2xl font-bold mb-4">Order Details</h3>
-                                <p><span className="font-semibold">Status:</span> {selectedOrder.status}</p>
-                                <p><span className="font-semibold">Site:</span> {selectedOrder.siteName}</p>
-                                <p><span className="font-semibold">Special Requests:</span> {selectedOrder.specialRequests || 'None'}</p>
-                                
-                                <h4 className="text-xl font-semibold mt-6 mb-2">Items</h4>
-                                <ul className="list-disc list-inside space-y-1">
-                                    {selectedOrder.items.map(item => (
-                                        <li key={item.id}>{item.name} (x{item.quantity}) - <span className="italic">{item.status}</span></li>
-                                    ))}
-                                </ul>
-
-                                <h4 className="text-xl font-semibold mt-6 mb-2">Communication</h4>
-                                <div className="border rounded-lg p-4 h-48 overflow-y-auto bg-gray-50 mb-4">
-                                    {(selectedOrder.communication || []).length === 0 && <p className="text-gray-500">No messages yet.</p>}
-                                    {(selectedOrder.communication || []).map((msg, i) => (
-                                        <p key={i}><span className="font-semibold">{msg.sender}:</span> {msg.message}</p>
-                                    ))}
-                                </div>
-                                <div className="flex space-x-2">
-                                    <input type="text" value={newMessage} onChange={e => setNewMessage(e.target.value)} placeholder="Type a follow-up message..." className="flex-grow p-2 border rounded" />
-                                    <button onClick={handleSendMessage} className="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700">Send</button>
-                                </div>
-                            </div>
-                        ) : (
-                            <p className="text-center text-gray-500 text-xl">Select an order to view details.</p>
-                        )}
-                    </div>
-                </div>
-            );
-        };
-        
-        const OrderStatusChecklist = ({ currentStatus, onStatusUpdate }) => {
-            const statuses = ["Processing", "Awaiting Pickup", "In Transit", "Delivered"];
-            const currentIndex = statuses.indexOf(currentStatus);
-
-            return (
-                <div className="w-full">
-                    <div className="flex items-center">
-                        {statuses.map((status, index) => {
-                            const isCompleted = index < currentIndex;
-                            const isCurrent = index === currentIndex;
-                            
-                            const nodeColor = isCompleted || isCurrent ? 'bg-blue-600' : 'bg-gray-300';
-                            const textColor = isCompleted || isCurrent ? 'text-blue-600' : 'text-gray-500';
-                            const lineColor = isCompleted ? 'bg-blue-600' : 'bg-gray-300';
-
-                            return (
-                                <React.Fragment key={status}>
-                                    <div className="flex flex-col items-center cursor-pointer" onClick={() => onStatusUpdate(status)}>
-                                        <div className={`w-6 h-6 rounded-full ${nodeColor} flex items-center justify-center`}>
-                                            {isCompleted && <span className="text-white font-bold text-sm">✓</span>}
-                                        </div>
-                                        <p className={`mt-2 text-sm text-center font-semibold ${textColor}`}>{status}</p>
-                                    </div>
-                                    {index < statuses.length - 1 && (
-                                        <div className={`flex-1 h-1 mx-2 ${lineColor}`}></div>
-                                    )}
-                                </React.Fragment>
-                            );
-                        })}
-                    </div>
                 </div>
             );
         };
 
-        const OrderManagementPage = () => {
-            const { user, firebaseInstances, showModal, setNewOrderCount } = useAppContext();
-            const [orders, setOrders] = useState([]);
+        const ToolsManagementPage = () => {
+            const { firebaseInstances, showModal } = useAppContext();
+            const [tools, setTools] = useState([]);
+            const [sites, setSites] = useState([]);
             const [loading, setLoading] = useState(true);
-            const [selectedOrder, setSelectedOrder] = useState(null);
-            const [newMessage, setNewMessage] = useState("");
+            const [newToolData, setNewToolData] = useState({ name: '', siteId: '' });
+            const [editingTool, setEditingTool] = useState(null);
 
-            const ITEM_STATUSES = ["Pending", "Picked", "Out of Stock", "Substituted"];
-
-            // Clear notifications when visiting this page
-            useEffect(() => {
-                setNewOrderCount(0);
-            }, []);
-            
             useEffect(() => {
                 if (!firebaseInstances) return;
-                setLoading(true);
-                const q = window.query(window.collection(firebaseInstances.primaryDb, "orders"));
-                const unsubscribe = window.onSnapshot(q, (querySnapshot) => {
-                    const ordersData = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })).sort((a, b) => (b.createdAt?.seconds || 0) - (a.createdAt?.seconds || 0));
-                    setOrders(ordersData);
+                const toolsCol = window.collection(firebaseInstances.primaryDb, '/public/data/tools');
+                const unsubscribeTools = window.onSnapshot(toolsCol, (snapshot) => {
+                    const toolsData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+                    setTools(toolsData);
+                    if (snapshot.empty) {
+                        const defaultTools = [
+                            { name: 'Grinder', status: 'Available', homeSiteName: 'Main Warehouse' },
+                            { name: 'Welding Machine', status: 'Available', homeSiteName: 'Main Warehouse' },
+                        ];
+                        const batch = window.writeBatch(firebaseInstances.primaryDb);
+                        defaultTools.forEach(tool => {
+                            const docRef = window.doc(toolsCol);
+                            batch.set(docRef, tool);
+                        });
+                        batch.commit().catch(err => console.error("Error seeding tools:", err));
+                    }
                     setLoading(false);
                 }, (error) => {
-                    console.error("Error fetching orders:", error);
-                     if (error.code === 'permission-denied') {
-                         showModal("Could not load orders due to a permissions issue. Please check the security rules in your Firebase project.");
-                    } else {
-                        showModal("Failed to load orders.");
-                    }
+                    console.error("Error fetching tools:", error);
+                    showModal("Failed to load tools.");
                     setLoading(false);
                 });
-                return () => unsubscribe();
+
+                const fetchSites = async () => {
+                    try {
+                        const sitesCol = window.collection(firebaseInstances.secondaryDb, '/artifacts/default-app-id/public/data/sites');
+                        const sitesSnapshot = await window.getDocs(sitesCol);
+                        setSites(sitesSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+                    } catch (error) {
+                        console.error("Error fetching sites:", error);
+                    }
+                };
+                fetchSites();
+
+                return () => unsubscribeTools();
             }, [firebaseInstances]);
 
-            // This effect keeps the selectedOrder state in sync with the main orders list
-            useEffect(() => {
-                if (selectedOrder) {
-                    const updatedSelectedOrder = orders.find(o => o.id === selectedOrder.id);
-                    if (updatedSelectedOrder) {
-                        setSelectedOrder(updatedSelectedOrder);
-                    }
+            const handleAddTool = async (e) => {
+                e.preventDefault();
+                if (!newToolData.name.trim() || !newToolData.siteId) {
+                    showModal("Please enter a tool name and select a home site.");
+                    return;
                 }
-            }, [orders]);
-            
-            const updateOrderStatus = async (orderId, status) => {
+                const site = sites.find(s => s.id === newToolData.siteId);
                 try {
-                    const orderRef = window.doc(firebaseInstances.primaryDb, 'orders', orderId);
-                    await window.updateDoc(orderRef, { status });
+                    const toolsCol = window.collection(firebaseInstances.primaryDb, '/public/data/tools');
+                    await window.addDoc(toolsCol, { 
+                        name: newToolData.name, 
+                        status: 'Available',
+                        homeSiteId: newToolData.siteId,
+                        homeSiteName: site?.name || 'Unknown Site'
+                    });
+                    setNewToolData({ name: '', siteId: '' });
+                    showModal("Tool added successfully!");
                 } catch (error) {
-                    console.error("Error updating order status:", error);
-                    showModal("Failed to update order status.");
+                    console.error("Error adding tool:", error);
+                    showModal("Failed to add tool.");
                 }
             };
-            
-            const updateItemStatus = async (orderId, itemIndex, status) => {
-                const orderToUpdate = orders.find(o => o.id === orderId);
-                if (!orderToUpdate) return;
 
-                const updatedItems = orderToUpdate.items.map((item, index) => {
-                    if (index === itemIndex) {
-                        return { ...item, status: status };
+            const handleDeleteTool = async (toolId) => {
+                showModal("Are you sure you want to delete this tool?", async () => {
+                    try {
+                        const toolRef = window.doc(firebaseInstances.primaryDb, '/public/data/tools', toolId);
+                        await window.deleteDoc(toolRef);
+                        showModal("Tool deleted successfully.");
+                    } catch (error) {
+                        console.error("Error deleting tool:", error);
+                        showModal("Failed to delete tool.");
                     }
-                    return item;
                 });
-                
+            };
+            
+            const handleUpdateTool = async () => {
+                 if (!editingTool.name.trim()) {
+                    showModal("Tool name cannot be empty.");
+                    return;
+                }
                 try {
-                    const orderRef = window.doc(firebaseInstances.primaryDb, 'orders', orderId);
-                    await window.updateDoc(orderRef, { items: updatedItems });
+                    const toolRef = window.doc(firebaseInstances.primaryDb, '/public/data/tools', editingTool.id);
+                    await window.updateDoc(toolRef, { name: editingTool.name });
+                    setEditingTool(null);
+                    showModal("Tool updated successfully.");
                 } catch (error) {
-                    console.error("Error updating item status:", error);
-                    showModal("Failed to update item status.");
+                    console.error("Error updating tool:", error);
+                    showModal("Failed to update tool.");
                 }
             };
 
-            const handleSendMessage = async () => {
-                if (!newMessage.trim() || !selectedOrder) return;
-                const updatedCommunication = [
-                    ...(selectedOrder.communication || []),
-                    { sender: user.username, message: newMessage, timestamp: new Date() }
-                ];
-                try {
-                    const orderRef = window.doc(firebaseInstances.primaryDb, 'orders', selectedOrder.id);
-                    await window.updateDoc(orderRef, { communication: updatedCommunication });
-                    setNewMessage("");
+            const handleReturnTool = async (toolId) => {
+                 try {
+                    const toolRef = window.doc(firebaseInstances.primaryDb, '/public/data/tools', toolId);
+                    await window.updateDoc(toolRef, { 
+                        status: 'Available',
+                        borrowedBy: '',
+                        siteName: '',
+                        borrowedDate: null
+                    });
+                    showModal("Tool marked as returned.");
                 } catch (error) {
-                    console.error("Error sending message:", error);
-                    showModal("Failed to send message.");
+                    console.error("Error returning tool:", error);
+                    showModal("Failed to return tool.");
                 }
             };
 
-            if (loading) return <LoadingSpinner message="Loading All Orders..." />;
+            if (loading) return <LoadingSpinner message="Loading Tools..." />;
 
             return (
-                 <div className="p-8 grid grid-cols-1 md:grid-cols-3 gap-8">
-                    <div className="md:col-span-1">
-                        <h2 className="text-3xl font-bold mb-6">All Orders</h2>
-                        <div className="bg-white p-4 rounded-lg shadow-md space-y-3 max-h-[80vh] overflow-y-auto">
-                            {orders.length === 0 && <p>No orders found.</p>}
-                            {orders.map(order => (
-                                <div key={order.id} onClick={() => setSelectedOrder(order)} className={`p-4 border rounded-lg cursor-pointer ${selectedOrder?.id === order.id ? 'bg-blue-100 border-blue-500' : 'hover:bg-gray-50'}`}>
-                                    <p className="font-semibold">Order #{order.id.substring(0, 6)}... ({order.username})</p>
-                                    <p>Site: {order.siteName}</p>
-                                    <p>Status: <span className="font-medium">{order.status}</span></p>
-                                    <p className="text-sm text-gray-500">{order.createdAt?.toDate().toLocaleString()}</p>
+                <div className="p-4 sm:p-8">
+                    <h2 className="text-3xl font-bold mb-6">Tools Management</h2>
+                    <div className="bg-white p-6 rounded-lg shadow-md mb-8">
+                        <h3 className="text-xl font-semibold mb-4">Add New Tool</h3>
+                        <form onSubmit={handleAddTool} className="grid grid-cols-1 md:grid-cols-3 gap-4 items-end">
+                            <div className="flex-grow">
+                                <label htmlFor="tool-name" className="block text-sm font-medium text-gray-700">Tool Name</label>
+                                <input id="tool-name" type="text" placeholder="e.g., Grinder" value={newToolData.name} onChange={e => setNewToolData({...newToolData, name: e.target.value})} className="mt-1 p-2 border rounded w-full" />
+                            </div>
+                             <div className="flex-grow">
+                                <label htmlFor="site-select" className="block text-sm font-medium text-gray-700">Home Site</label>
+                                <select id="site-select" value={newToolData.siteId} onChange={e => setNewToolData({...newToolData, siteId: e.target.value})} className="mt-1 w-full p-2 border rounded bg-white">
+                                    <option value="" disabled>Select a site</option>
+                                    {sites.map(site => <option key={site.id} value={site.id}>{site.name}</option>)}
+                                </select>
+                            </div>
+                            <button type="submit" className="bg-green-500 text-white px-4 py-2 rounded hover:bg-green-600 h-10">Add Tool</button>
+                        </form>
+                    </div>
+
+                    <div className="bg-white p-6 rounded-lg shadow-md">
+                        <h3 className="text-xl font-semibold mb-4">Existing Tools</h3>
+                        <div className="space-y-4">
+                            {tools.map(tool => (
+                                <div key={tool.id} className="p-4 border rounded-lg flex flex-col md:flex-row justify-between items-center gap-4">
+                                    {editingTool?.id === tool.id ? (
+                                        <>
+                                            <input type="text" value={editingTool.name} onChange={e => setEditingTool({...editingTool, name: e.target.value})} className="p-2 border rounded w-full md:w-auto flex-grow" />
+                                            <div className="flex space-x-2">
+                                                <button onClick={handleUpdateTool} className="bg-blue-500 text-white px-3 py-1 rounded hover:bg-blue-600">Save</button>
+                                                <button onClick={() => setEditingTool(null)} className="bg-gray-500 text-white px-3 py-1 rounded hover:bg-gray-600">Cancel</button>
+                                            </div>
+                                        </>
+                                    ) : (
+                                        <>
+                                            <div className="flex-grow">
+                                                <p className="font-semibold text-lg">{tool.name}</p>
+                                                <p className="text-sm text-gray-600">Status: {tool.status} {tool.borrowedBy && `(by ${tool.borrowedBy} at ${tool.siteName})`}</p>
+                                                <p className="text-xs text-gray-500">Home Site: {tool.homeSiteName}</p>
+                                            </div>
+                                            <div className="flex space-x-2">
+                                                {tool.status === 'Hiram' && <button onClick={() => handleReturnTool(tool.id)} className="bg-green-500 text-white px-3 py-1 rounded hover:bg-green-600">Mark as Returned</button>}
+                                                <button onClick={() => setEditingTool(tool)} className="bg-yellow-500 text-white px-3 py-1 rounded hover:bg-yellow-600">Edit</button>
+                                                <button onClick={() => handleDeleteTool(tool.id)} className="bg-red-500 text-white px-3 py-1 rounded hover:bg-red-600">Delete</button>
+                                            </div>
+                                        </>
+                                    )}
                                 </div>
                             ))}
                         </div>
-                    </div>
-                    <div className="md:col-span-2 bg-white p-6 rounded-lg shadow-md">
-                        {selectedOrder ? (
-                            <div>
-                                <h3 className="text-2xl font-bold mb-4">Manage Order #{selectedOrder.id.substring(0, 6)}</h3>
-                                
-                                <div className="mb-6 p-4 border rounded-lg bg-gray-50">
-                                    <label className="block font-semibold mb-3 text-gray-700">Order Progress</label>
-                                    <OrderStatusChecklist 
-                                        currentStatus={selectedOrder.status}
-                                        onStatusUpdate={(newStatus) => updateOrderStatus(selectedOrder.id, newStatus)}
-                                    />
-                                </div>
-
-                                <div className="grid grid-cols-2 gap-4 mb-6">
-                                    <button 
-                                        onClick={() => updateOrderStatus(selectedOrder.id, "Waiting for Supplier")}
-                                        className={`p-2 rounded-lg text-white font-semibold transition-colors ${selectedOrder.status === 'Waiting for Supplier' ? 'bg-orange-500' : 'bg-orange-400 hover:bg-orange-500'}`}
-                                    >
-                                        Set to: Waiting for Supplier
-                                    </button>
-                                    <button 
-                                        onClick={() => updateOrderStatus(selectedOrder.id, "Cancelled")}
-                                        className={`p-2 rounded-lg text-white font-semibold transition-colors ${selectedOrder.status === 'Cancelled' ? 'bg-red-600' : 'bg-red-500 hover:bg-red-600'}`}
-                                    >
-                                       Set to: Cancelled
-                                    </button>
-                                </div>
-
-                                <p className="mb-1"><span className="font-semibold">Orderer:</span> {selectedOrder.username}</p>
-                                <p className="mb-4"><span className="font-semibold">Site:</span> {selectedOrder.siteName}</p>
-                                {selectedOrder.specialRequests && <p className="mb-4 p-3 bg-yellow-100 border border-yellow-200 rounded-lg"><span className="font-semibold">Special Requests:</span> {selectedOrder.specialRequests}</p>}
-                                
-                                <h4 className="text-xl font-semibold mt-6 mb-2">Items</h4>
-                                <div className="space-y-2">
-                                    {selectedOrder.items.map((item, index) => (
-                                        <div key={item.id} className="flex items-center justify-between p-2 bg-gray-50 rounded">
-                                            <span>{item.name} (x{item.quantity})</span>
-                                            <select value={item.status} onChange={e => updateItemStatus(selectedOrder.id, index, e.target.value)} className="p-1 border rounded bg-white">
-                                                {ITEM_STATUSES.map(s => <option key={s} value={s}>{s}</option>)}
-                                            </select>
-                                        </div>
-                                    ))}
-                                </div>
-
-                                <h4 className="text-xl font-semibold mt-6 mb-2">Communication</h4>
-                                <div className="border rounded-lg p-4 h-48 overflow-y-auto bg-gray-50 mb-4">
-                                    {(selectedOrder.communication || []).length === 0 && <p className="text-gray-500">No messages yet.</p>}
-                                    {(selectedOrder.communication || []).map((msg, i) => (
-                                        <p key={i}><span className="font-semibold">{msg.sender}:</span> {msg.message}</p>
-                                    ))}
-                                </div>
-                                <div className="flex space-x-2">
-                                    <input type="text" value={newMessage} onChange={e => setNewMessage(e.target.value)} placeholder="Type a reply..." className="flex-grow p-2 border rounded" />
-                                    <button onClick={handleSendMessage} className="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700">Reply</button>
-                                </div>
-                            </div>
-                        ) : (
-                            <div className="flex items-center justify-center h-full">
-                                <p className="text-center text-gray-500 text-xl">Select an order to manage.</p>
-                            </div>
-                        )}
                     </div>
                 </div>
             );
         };
 
-        // --- Main App Component ---
         const App = () => {
             const { user, loading, firebaseInstances, setNewOrderCount } = useAppContext();
             const [currentPage, setCurrentPage] = useState('inventory');
-            const [showWelcome, setShowWelcome] = useState(true);
             const [appLoadTime] = useState(new Date());
 
-            // Effect to listen for new orders for admin/warehouse users
             useEffect(() => {
                 if (!user || !firebaseInstances || (user.role !== 'admin' && user.role !== 'warehouse')) {
                     return;
                 }
-
                 const q = window.query(
                     window.collection(firebaseInstances.primaryDb, "orders"), 
                     window.where("createdAt", ">", appLoadTime)
                 );
-
                 const unsubscribe = window.onSnapshot(q, (snapshot) => {
                     setNewOrderCount(snapshot.size);
                 });
-
                 return () => unsubscribe();
-
             }, [user, firebaseInstances]);
 
             useEffect(() => {
                 if (user) {
-                    // Default page based on role
-                    if (user.role === 'warehouse') setCurrentPage('order_management');
-                    else if (user.role === 'admin') setCurrentPage('order_management');
+                    if (user.role === 'warehouse' || user.role === 'admin') setCurrentPage('order_management');
                     else setCurrentPage('inventory');
                 }
             }, [user]);
 
-            if (loading) {
-                return <LoadingSpinner message="Initializing Connections..." />;
-            }
+            if (loading) return <LoadingSpinner message="Initializing Connections..." />;
             
-            if (showWelcome && !user) { // Only show welcome if not already logged in
-                return <WelcomePage onVideoEnd={() => setShowWelcome(false)} />;
-            }
-
             if (!firebaseInstances) {
                 return (
-                    <div className="flex items-center justify-center h-screen text-center text-red-500 p-8">
+                    <div className="flex items-center justify-center h-screen text-center text-red-500 p-4">
                         <h1 className="text-2xl font-bold">Fatal Error: Could not connect to databases.</h1>
                         <p>Please check your Firebase configuration and security rules, then refresh the page.</p>
                     </div>
@@ -1224,6 +1297,8 @@
                     case 'order_history': return <OrderHistoryPage />;
                     case 'order_management': return <OrderManagementPage />;
                     case 'user_management': return <UserManagementPage />;
+                    case 'tools': return <ToolsPage />;
+                    case 'tools_management': return <ToolsManagementPage />;
                     default: return <InventoryPage />;
                 }
             };

@@ -15,7 +15,7 @@
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/9.22.0/firebase-app.js";
         window.initializeApp = initializeApp;
-        import { getFirestore, collection, getDocs, doc, setDoc, addDoc, onSnapshot, query, where, updateDoc, writeBatch, serverTimestamp, deleteDoc, runTransaction } from "https://www.gstatic.com/firebasejs/9.22.0/firebase-firestore.js";
+        import { getFirestore, collection, getDocs, doc, setDoc, addDoc, onSnapshot, query, where, updateDoc, writeBatch, serverTimestamp, deleteDoc, runTransaction, enableIndexedDbPersistence } from "https://www.gstatic.com/firebasejs/9.22.0/firebase-firestore.js";
         window.getFirestore = getFirestore;
         window.collection = collection;
         window.getDocs = getDocs;
@@ -30,6 +30,7 @@
         window.serverTimestamp = serverTimestamp;
         window.deleteDoc = deleteDoc;
         window.runTransaction = runTransaction;
+        window.enableIndexedDbPersistence = enableIndexedDbPersistence;
         import { getAuth, signInAnonymously } from "https://www.gstatic.com/firebasejs/9.22.0/firebase-auth.js";
         window.getAuth = getAuth;
         window.signInAnonymously = signInAnonymously;
@@ -92,13 +93,28 @@
             90% { opacity: 1; transform: translateY(0); }
             100% { opacity: 0; transform: translateY(-20px); }
         }
+        @media print {
+            body * {
+                visibility: hidden;
+            }
+            #printable-report, #printable-report * {
+                visibility: visible;
+            }
+            #printable-report {
+                position: absolute;
+                left: 0;
+                top: 0;
+                width: 100%;
+            }
+        }
     </style>
 </head>
 <body class="bg-gray-100">
     <div id="root"></div>
+    <div id="printable-report" class="hidden"></div>
 
     <script type="text/babel">
-        const { useState, useEffect, createContext, useContext, useRef } = React;
+        const { useState, useEffect, createContext, useContext, useRef, useMemo } = React;
         
         // --- Firebase Configuration ---
         const primaryFirebaseConfig = {
@@ -125,17 +141,36 @@
             const [user, setUser] = useState(null);
             const [loading, setLoading] = useState(true);
             const [modal, setModal] = useState({ isOpen: false, message: '', onConfirm: null });
-            const [toast, setToast] = useState({ show: false, message: '', type: 'success' }); // NEW: Toast state
+            const [toast, setToast] = useState({ show: false, message: '', type: 'success' });
             const [firebaseInstances, setFirebaseInstances] = useState(null);
             const [newOrderCount, setNewOrderCount] = useState(0);
             const [newToolRequestCount, setNewToolRequestCount] = useState(0);
             const [users, setUsers] = useState([]);
+            const [isUsersLoading, setIsUsersLoading] = useState(true);
+
 
             useEffect(() => {
                 const initializeFirebase = async () => {
                     try {
                         const primaryApp = window.initializeApp(primaryFirebaseConfig, "primary");
                         const primaryDb = window.getFirestore(primaryApp);
+                        
+                        // Enable offline persistence
+                        try {
+                           await window.enableIndexedDbPersistence(primaryDb);
+                           showToast("Offline capability enabled.", "success");
+                        } catch (err) {
+                            if (err.code == 'failed-precondition') {
+                                // Multiple tabs open, persistence can only be enabled in one.
+                                console.warn("Firestore offline persistence failed: multiple tabs open.");
+                            } else if (err.code == 'unimplemented') {
+                                // The current browser does not support all of the
+                                // features required to enable persistence
+                                console.error("Firestore offline persistence not available in this browser.");
+                            }
+                        }
+
+
                         const primaryAuth = window.getAuth(primaryApp);
                         await window.signInAnonymously(primaryAuth);
 
@@ -146,8 +181,6 @@
                     } catch (error) {
                         console.error("Firebase Initialization Error:", error);
                         setModal({ isOpen: true, message: `Failed to connect to databases. Error: ${error.message}` });
-                    } finally {
-                        setLoading(false);
                     }
                 };
                 initializeFirebase();
@@ -155,15 +188,17 @@
 
             useEffect(() => {
                 if (!firebaseInstances) return;
+                setIsUsersLoading(true);
                 const usersCol = window.collection(firebaseInstances.primaryDb, '/public/data/users');
                 const unsubscribe = window.onSnapshot(usersCol, (snapshot) => {
                     const usersData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
                     setUsers(usersData);
+                    setIsUsersLoading(false);
                     if (snapshot.empty) {
                         const defaultUsers = [
-                            { username: 'ADMIN', pin: '1234', role: 'admin' },
-                            { username: 'WAREHOUSE', pin: '5678', role: 'warehouse' },
-                            { username: 'JOHN', pin: '1111', role: 'orderer' },
+                            { username: 'ADMIN', pin: '1234', role: 'admin', fullName: 'ADMINISTRATOR', phoneNumber: 'N/A' },
+                            { username: 'WAREHOUSE', pin: '5678', role: 'warehouse', fullName: 'WAREHOUSE STAFF', phoneNumber: 'N/A' },
+                            { username: 'JOHN', pin: '1111', role: 'orderer', fullName: 'JOHN DOE', phoneNumber: '123-456-7890' },
                         ];
                         const batch = window.writeBatch(firebaseInstances.primaryDb);
                         defaultUsers.forEach(user => {
@@ -175,9 +210,16 @@
                 }, (error) => {
                     console.error("Error fetching users:", error);
                     showModal("Could not load user accounts from the database.");
+                    setIsUsersLoading(false);
                 });
                 return () => unsubscribe();
             }, [firebaseInstances]);
+
+            useEffect(() => {
+                if(!isUsersLoading && firebaseInstances){
+                    setLoading(false);
+                }
+            }, [isUsersLoading, firebaseInstances]);
 
             const login = (username, pin) => {
                 const foundUser = users.find(u => u.username.toLowerCase() === username.toLowerCase() && u.pin === pin);
@@ -197,20 +239,31 @@
             };
             
             useEffect(() => {
+                if (isUsersLoading) return; // Wait for users to be loaded
+
                 try {
                     const savedUserJSON = localStorage.getItem('dlv_user');
                     if (savedUserJSON) {
                         const savedUser = JSON.parse(savedUserJSON);
                         const currentUserInDb = users.find(u => u.id === savedUser.id);
-                        if(currentUserInDb) setUser(currentUserInDb); else logout();
+                        
+                        if (currentUserInDb && currentUserInDb.pin === savedUser.pin) {
+                            if (!user || user.id !== currentUserInDb.id) {
+                                setUser(currentUserInDb);
+                            }
+                        } else {
+                           if(user) logout();
+                        }
                     }
-                } catch (error) { console.error("Error reading user session:", error); }
-            }, [users]);
+                } catch (error) { 
+                    console.error("Error reading user session:", error); 
+                    logout();
+                }
+            }, [users, isUsersLoading]);
 
             const showModal = (message, onConfirm = null) => setModal({ isOpen: true, message, onConfirm });
             const closeModal = () => setModal({ isOpen: false, message: '', onConfirm: null });
 
-            // NEW: Function to show a toast notification
             const showToast = (message, type = 'success') => {
                 setToast({ show: true, message, type });
                 setTimeout(() => {
@@ -224,18 +277,13 @@
 
         const useAppContext = () => useContext(AppContext);
 
-        // NEW: Toast Component
         const Toast = () => {
             const { toast } = useAppContext();
             if (!toast.show) return null;
-
             const toastClass = toast.type === 'success' ? 'toast-success' : 'toast-error';
-
             return (
                 <div className="toast-container">
-                    <div className={`toast ${toastClass}`}>
-                        {toast.message}
-                    </div>
+                    <div className={`toast ${toastClass}`}>{toast.message}</div>
                 </div>
             );
         };
@@ -293,65 +341,84 @@
         
         const Nav = ({ setCurrentPage }) => {
             const { user, newOrderCount, setNewOrderCount, newToolRequestCount, setNewToolRequestCount } = useAppContext();
+            const [isMenuOpen, setIsMenuOpen] = useState(false);
             const handleNavClick = (page) => {
                 if(page === 'order_management') setNewOrderCount(0);
                 if(page === 'tool_requests') setNewToolRequestCount(0);
                 setCurrentPage(page);
+                setIsMenuOpen(false);
             }
             if (!user) return null;
             return (
                 <nav className="bg-gray-800 text-white p-4">
-                    <ul className="flex flex-wrap justify-center sm:justify-start space-x-4 sm:space-x-6">
-                        {(user.role === 'orderer' || user.role === 'admin') && (
-                            <>
-                                <li><button onClick={() => handleNavClick('inventory')} className="hover:text-blue-300">Inventory</button></li>
-                                <li><button onClick={() => handleNavClick('cart')} className="hover:text-blue-300">Cart</button></li>
-                                <li><button onClick={() => handleNavClick('order_history')} className="hover:text-blue-300">Order History</button></li>
-                                <li><button onClick={() => handleNavClick('tools')} className="hover:text-blue-300">Tools Library</button></li>
-                                <li><button onClick={() => handleNavClick('my_tool_requests')} className="hover:text-blue-300">My Tool Requests</button></li>
-                            </>
-                        )}
-                        {(user.role === 'warehouse' || user.role === 'admin') && (
-                            <>
-                                <li>
-                                    <button onClick={() => handleNavClick('order_management')} className="hover:text-blue-300 flex items-center">
-                                        Order Management
-                                        {newOrderCount > 0 && <span className="ml-2 bg-red-500 text-white text-xs rounded-full h-5 w-5 flex items-center justify-center">{newOrderCount}</span>}
-                                    </button>
-                                </li>
-                                <li>
-                                    <button onClick={() => handleNavClick('tool_requests')} className="hover:text-blue-300 flex items-center">
-                                        Tool Requests
-                                        {newToolRequestCount > 0 && <span className="ml-2 bg-red-500 text-white text-xs rounded-full h-5 w-5 flex items-center justify-center">{newToolRequestCount}</span>}
-                                    </button>
-                                </li>
-                            </>
-                        )}
-                        {user.role === 'admin' && (
-                             <>
-                                <li><button onClick={() => handleNavClick('user_management')} className="hover:text-blue-300">User Management</button></li>
-                                <li><button onClick={() => handleNavClick('tools_management')} className="hover:text-blue-300">Tools Management</button></li>
-                                <li><button onClick={() => handleNavClick('reports')} className="hover:text-blue-300">Reports</button></li>
-                             </>
-                        )}
-                    </ul>
+                    <div className="flex items-center justify-between">
+                        <div className="sm:hidden">
+                            <button onClick={() => setIsMenuOpen(!isMenuOpen)} className="focus:outline-none">
+                                <svg className="h-6 w-6 fill-current" viewBox="0 0 24 24">
+                                    <path d="M4 6h16M4 12h16M4 18h16"></path>
+                                </svg>
+                            </button>
+                        </div>
+                        <ul className={`hidden sm:flex sm:flex-row sm:items-center sm:space-x-6`}>
+                            {(user.role === 'orderer' || user.role === 'admin') && (
+                                <>
+                                    <li><button onClick={() => handleNavClick('inventory')} className="hover:text-blue-300">Inventory</button></li>
+                                    <li><button onClick={() => handleNavClick('cart')} className="hover:text-blue-300">Cart</button></li>
+                                    <li><button onClick={() => handleNavClick('order_history')} className="hover:text-blue-300">Order History</button></li>
+                                    <li><button onClick={() => handleNavClick('tools')} className="hover:text-blue-300">Tools Library</button></li>
+                                    <li><button onClick={() => handleNavClick('my_tool_requests')} className="hover:text-blue-300">My Tool Requests</button></li>
+                                </>
+                            )}
+                            {(user.role === 'warehouse' || user.role === 'admin') && (
+                                <>
+                                    <li><button onClick={() => handleNavClick('order_management')} className="hover:text-blue-300 flex items-center">Order Management{newOrderCount > 0 && <span className="ml-2 bg-red-500 text-white text-xs rounded-full h-5 w-5 flex items-center justify-center">{newOrderCount}</span>}</button></li>
+                                    <li><button onClick={() => handleNavClick('tool_requests')} className="hover:text-blue-300 flex items-center">Tool Requests{newToolRequestCount > 0 && <span className="ml-2 bg-red-500 text-white text-xs rounded-full h-5 w-5 flex items-center justify-center">{newToolRequestCount}</span>}</button></li>
+                                </>
+                            )}
+                            {user.role === 'admin' && (
+                                 <>
+                                    <li><button onClick={() => handleNavClick('user_management')} className="hover:text-blue-300">User Management</button></li>
+                                    <li><button onClick={() => handleNavClick('tools_management')} className="hover:text-blue-300">Tools Management</button></li>
+                                    <li><button onClick={() => handleNavClick('forecasting')} className="hover:text-blue-300">Forecasting</button></li>
+                                 </>
+                            )}
+                        </ul>
+                    </div>
+                     {isMenuOpen && (
+                        <ul className="flex flex-col mt-4 space-y-2 sm:hidden">
+                            {(user.role === 'orderer' || user.role === 'admin') && (
+                                <>
+                                    <li><button onClick={() => handleNavClick('inventory')} className="hover:text-blue-300 block py-2">Inventory</button></li>
+                                    <li><button onClick={() => handleNavClick('cart')} className="hover:text-blue-300 block py-2">Cart</button></li>
+                                    <li><button onClick={() => handleNavClick('order_history')} className="hover:text-blue-300 block py-2">Order History</button></li>
+                                    <li><button onClick={() => handleNavClick('tools')} className="hover:text-blue-300 block py-2">Tools Library</button></li>
+                                    <li><button onClick={() => handleNavClick('my_tool_requests')} className="hover:text-blue-300 block py-2">My Tool Requests</button></li>
+                                </>
+                            )}
+                            {(user.role === 'warehouse' || user.role === 'admin') && (
+                                <>
+                                    <li><button onClick={() => handleNavClick('order_management')} className="hover:text-blue-300 flex items-center py-2">Order Management{newOrderCount > 0 && <span className="ml-2 bg-red-500 text-white text-xs rounded-full h-5 w-5 flex items-center justify-center">{newOrderCount}</span>}</button></li>
+                                    <li><button onClick={() => handleNavClick('tool_requests')} className="hover:text-blue-300 flex items-center py-2">Tool Requests{newToolRequestCount > 0 && <span className="ml-2 bg-red-500 text-white text-xs rounded-full h-5 w-5 flex items-center justify-center">{newToolRequestCount}</span>}</button></li>
+                                </>
+                            )}
+                            {user.role === 'admin' && (
+                                 <>
+                                    <li><button onClick={() => handleNavClick('user_management')} className="hover:text-blue-300 block py-2">User Management</button></li>
+                                    <li><button onClick={() => handleNavClick('tools_management')} className="hover:text-blue-300 block py-2">Tools Management</button></li>
+                                    <li><button onClick={() => handleNavClick('forecasting')} className="hover:text-blue-300 block py-2">Forecasting</button></li>
+                                 </>
+                            )}
+                        </ul>
+                    )}
                 </nav>
             );
         };
 
-        const WelcomePage = ({ onVideoEnd }) => {
-            return (
-                <div className="fixed inset-0 w-screen h-screen bg-black overflow-hidden" onClick={onVideoEnd}>
-                    <video 
-                        src="https://i.imgur.com/ys1F2xc.mp4" 
-                        muted 
-                        autoPlay // MODIFIED: Video now autoplays
-                        onEnded={onVideoEnd}
-                        className="absolute top-0 left-0 w-full h-full object-cover z-0"
-                    ></video>
-                </div>
-            );
-        };
+        const WelcomePage = ({ onVideoEnd }) => (
+            <div className="fixed inset-0 w-screen h-screen bg-black overflow-hidden" onClick={onVideoEnd}>
+                <video src="https://i.imgur.com/ys1F2xc.mp4" muted autoPlay onEnded={onVideoEnd} className="absolute top-0 left-0 w-full h-full object-cover z-0"></video>
+            </div>
+        );
 
         const LoginPage = () => {
             const [username, setUsername] = useState('');
@@ -388,9 +455,8 @@
             );
         };
         
-        // --- PAGES --- //
         const InventoryPage = () => {
-            const { user, firebaseInstances, showModal, showToast } = useAppContext(); // MODIFIED: Added showToast
+            const { user, firebaseInstances, showModal, showToast } = useAppContext();
             const [inventory, setInventory] = useState([]);
             const [loading, setLoading] = useState(true);
             const [searchTerm, setSearchTerm] = useState("");
@@ -409,9 +475,7 @@
                     try {
                         const inventoryCol = window.collection(firebaseInstances.secondaryDb, '/artifacts/default-app-id/public/data/inventory');
                         const inventorySnapshot = await window.getDocs(inventoryCol);
-                        const inventoryList = inventorySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-                        
-                        setInventory(inventoryList);
+                        setInventory(inventorySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
 
                         const imagesCol = window.collection(firebaseInstances.primaryDb, '/public/data/inventory_overrides');
                         const imagesSnapshot = await window.getDocs(imagesCol);
@@ -428,9 +492,7 @@
                 fetchData();
             }, [firebaseInstances]);
 
-            useEffect(() => {
-                localStorage.setItem('dlv_cart', JSON.stringify(cart));
-            }, [cart]);
+            useEffect(() => { localStorage.setItem('dlv_cart', JSON.stringify(cart)); }, [cart]);
 
             const handleAddToCart = (item, quantity) => {
                 if (quantity <= 0) return;
@@ -438,7 +500,7 @@
                     const existingItem = prevCart[item.id];
                     return { ...prevCart, [item.id]: { ...item, quantity: (existingItem ? existingItem.quantity : 0) + quantity }};
                 });
-                showToast(`${quantity} x ${item.name} added to cart.`, 'success'); // MODIFIED: Use toast
+                showToast(`${quantity} x ${item.name} added to cart.`, 'success');
             };
 
             const handleAddPicture = async (itemId) => {
@@ -464,23 +526,18 @@
             if (loading) return <LoadingSpinner message="Loading Inventory..." />;
 
             return (
-                <div className="p-4 sm:p-8">
+                <div className="p-4 sm:p-6 lg:p-8">
                     <h2 className="text-3xl font-bold mb-6">Inventory</h2>
                     <input type="text" placeholder="Search inventory..." className="w-full p-3 mb-6 border rounded-lg shadow-sm uppercase" value={searchTerm} onChange={e => setSearchTerm(e.target.value.toUpperCase())} />
                     <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-6">
-                        {filteredInventory.map((item, index) => (
+                        {filteredInventory.map((item) => (
                             <div key={item.id} className="bg-white rounded-lg shadow-lg overflow-hidden flex flex-col">
                                 <img src={customImages[item.id] || 'https://placehold.co/400x300/e2e8f0/cbd5e0?text=No+Image'} alt={item.name} className="w-full h-48 object-cover" onError={(e) => { e.target.onerror = null; e.target.src='https://placehold.co/400x300/e2e8f0/cbd5e0?text=Image+Error'; }} />
                                 <div className="p-4 flex flex-col flex-grow">
                                     <h3 className="text-xl font-bold">{item.name}</h3>
                                     <p className="text-gray-600 mt-2 flex-grow">{item.description}</p>
                                     <div className="mt-auto pt-4">
-                                        <form onSubmit={(e) => {
-                                            e.preventDefault();
-                                            const quantity = parseInt(e.target.elements.quantity.value);
-                                            handleAddToCart(item, quantity);
-                                            e.target.elements.quantity.value = 1;
-                                        }} className="flex items-center space-x-2">
+                                        <form onSubmit={(e) => { e.preventDefault(); const quantity = parseInt(e.target.elements.quantity.value); handleAddToCart(item, quantity); e.target.elements.quantity.value = 1; }} className="flex items-center space-x-2">
                                             <input type="number" name="quantity" defaultValue="1" min="1" className="w-16 p-2 border rounded" />
                                             <button type="submit" className="flex-1 bg-blue-600 text-white p-2 rounded hover:bg-blue-700">Add to Cart</button>
                                         </form>
@@ -496,12 +553,7 @@
 
         const CartPage = ({ setCurrentPage }) => {
             const { user, firebaseInstances, showModal, showToast } = useAppContext();
-            const [cart, setCart] = useState(() => {
-                try {
-                    const savedCart = localStorage.getItem('dlv_cart');
-                    return savedCart ? JSON.parse(savedCart) : {};
-                } catch { return {}; }
-            });
+            const [cart, setCart] = useState(() => { try { const sc = localStorage.getItem('dlv_cart'); return sc ? JSON.parse(sc) : {}; } catch { return {}; } });
             const [sites, setSites] = useState([]);
             const [selectedSite, setSelectedSite] = useState('');
             const [specialRequests, setSpecialRequests] = useState('');
@@ -514,18 +566,13 @@
                         const sitesCol = window.collection(firebaseInstances.secondaryDb, '/artifacts/default-app-id/public/data/sites');
                         const sitesSnapshot = await window.getDocs(sitesCol);
                         setSites(sitesSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
-                    } catch (error) {
-                        console.error("Error fetching sites:", error);
-                    }
+                    } catch (error) { console.error("Error fetching sites:", error); }
                 };
                 fetchSites();
             }, [firebaseInstances]);
 
             const updateQuantity = (itemId, newQuantity) => {
-                if (newQuantity <= 0) {
-                    removeItem(itemId);
-                    return;
-                }
+                if (newQuantity <= 0) { removeItem(itemId); return; }
                 const newCart = { ...cart };
                 newCart[itemId].quantity = newQuantity;
                 setCart(newCart);
@@ -540,25 +587,12 @@
             };
 
             const handlePlaceOrder = async () => {
-                if (Object.keys(cart).length === 0) {
-                    showModal("Your cart is empty.");
-                    return;
-                }
-                if (!selectedSite) {
-                    showModal("Please select a project site.");
-                    return;
-                }
+                if (Object.keys(cart).length === 0) { showModal("Your cart is empty."); return; }
+                if (!selectedSite) { showModal("Please select a project site."); return; }
                 
                 setIsPlacingOrder(true);
                 try {
-                    const orderData = {
-                        userId: user.id, username: user.username, siteId: selectedSite,
-                        siteName: sites.find(s => s.id === selectedSite)?.name || 'Unknown Site',
-                        specialRequests, status: 'Pending', createdAt: window.serverTimestamp(),
-                        items: Object.values(cart).map(item => ({ id: item.id, name: item.name, quantity: item.quantity, status: 'Pending' })),
-                        communication: [],
-                        isNew: true
-                    };
+                    const orderData = { userId: user.id, username: user.username, siteId: selectedSite, siteName: sites.find(s => s.id === selectedSite)?.name || 'Unknown', specialRequests, status: 'Pending', createdAt: window.serverTimestamp(), items: Object.values(cart).map(item => ({ id: item.id, name: item.name, quantity: item.quantity, status: 'Pending' })), communication: [], isNew: true };
                     const ordersCol = window.collection(firebaseInstances.primaryDb, 'orders');
                     await window.addDoc(ordersCol, orderData);
                     setCart({});
@@ -573,16 +607,14 @@
                 }
             };
             
-            const cartItems = Object.values(cart);
-
             return (
-                <div className="p-4 sm:p-8">
+                <div className="p-4 sm:p-6 lg:p-8">
                     <h2 className="text-3xl font-bold mb-6">Shopping Cart</h2>
-                    {cartItems.length === 0 ? (
+                    {Object.values(cart).length === 0 ? (
                         <p className="text-center text-gray-500 text-xl">Your cart is empty.</p>
                     ) : (
                         <div className="bg-white p-6 rounded-lg shadow-md">
-                            {cartItems.map(item => (
+                            {Object.values(cart).map(item => (
                                 <div key={item.id} className="flex flex-col sm:flex-row items-start sm:items-center justify-between py-4 border-b">
                                     <span className="font-semibold w-full sm:w-1/2 mb-2 sm:mb-0">{item.name}</span>
                                     <div className="flex items-center space-x-4">
@@ -624,7 +656,7 @@
             useEffect(() => {
                 if (!firebaseInstances || !user) return;
                 setLoading(true);
-                const q = window.query(window.collection(firebaseInstances.primaryDb, "orders"), window.where("userId", "==", user.id));
+                const q = window.query(window.collection(firebaseInstances.primaryDb, "orders"), where("userId", "==", user.id));
                 const unsubscribe = window.onSnapshot(q, (querySnapshot) => {
                     const ordersData = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })).sort((a, b) => (b.createdAt?.seconds || 0) - (a.createdAt?.seconds || 0));
                     setOrders(ordersData);
@@ -639,10 +671,7 @@
             
             const handleSendMessage = async () => {
                 if (!newMessage.trim() || !selectedOrder) return;
-                const updatedCommunication = [
-                    ...(selectedOrder.communication || []),
-                    { sender: user.username, message: newMessage, timestamp: new Date() }
-                ];
+                const updatedCommunication = [...(selectedOrder.communication || []), { sender: user.username, message: newMessage, timestamp: new Date() }];
                 try {
                     const orderRef = window.doc(firebaseInstances.primaryDb, 'orders', selectedOrder.id);
                     await window.updateDoc(orderRef, { communication: updatedCommunication });
@@ -657,7 +686,7 @@
             if (loading) return <LoadingSpinner message="Loading Order History..." />;
             
             return (
-                <div className="p-4 sm:p-8 grid grid-cols-1 md:grid-cols-3 gap-8">
+                <div className="p-4 sm:p-6 lg:p-8 grid grid-cols-1 md:grid-cols-3 gap-8">
                     <div className="md:col-span-1">
                         <h2 id="order-history-header" className="text-3xl font-bold mb-6">My Orders</h2>
                         <div className="bg-white p-4 rounded-lg shadow-md space-y-3 max-h-[70vh] overflow-y-auto">
@@ -682,14 +711,12 @@
                                 </div>
                                 <p><span className="font-semibold">Site:</span> {selectedOrder.siteName}</p>
                                 <p><span className="font-semibold">Special Requests:</span> {selectedOrder.specialRequests || 'None'}</p>
-                                
                                 <h4 className="text-xl font-semibold mt-6 mb-2">Items</h4>
                                 <ul className="list-disc list-inside space-y-1">
                                     {selectedOrder.items.map(item => (
                                         <li key={item.id}>{item.name} (x{item.quantity}) - <span className="italic">{item.status}</span></li>
                                     ))}
                                 </ul>
-
                                 <h4 className="text-xl font-semibold mt-6 mb-2">Communication</h4>
                                 <div className="border rounded-lg p-4 h-48 overflow-y-auto bg-gray-50 mb-4">
                                     {(selectedOrder.communication || []).length === 0 && <p className="text-gray-500">No messages yet.</p>}
@@ -721,11 +748,9 @@
                         {statuses.map((status, index) => {
                             const isCompleted = index < currentIndex;
                             const isCurrent = index === currentIndex;
-                            
                             const nodeColor = isCompleted || isCurrent ? colors[index] : 'bg-gray-300';
                             const textColor = isCompleted || isCurrent ? 'text-gray-800' : 'text-gray-500';
                             const lineColor = isCompleted ? colors[index] : 'bg-gray-300';
-
                             return (
                                 <React.Fragment key={status}>
                                     <div className="flex flex-col items-center cursor-pointer" onClick={() => onStatusUpdate && onStatusUpdate(status)}>
@@ -734,9 +759,7 @@
                                         </div>
                                         <p className={`mt-2 text-sm text-center font-semibold ${textColor}`}>{status}</p>
                                     </div>
-                                    {index < statuses.length - 1 && (
-                                        <div className={`flex-1 h-1 mx-2 ${lineColor}`}></div>
-                                    )}
+                                    {index < statuses.length - 1 && <div className={`flex-1 h-1 mx-2 ${lineColor}`}></div>}
                                 </React.Fragment>
                             );
                         })}
@@ -752,12 +775,9 @@
             const [selectedOrder, setSelectedOrder] = useState(null);
             const [newMessage, setNewMessage] = useState("");
             const [viewArchived, setViewArchived] = useState(false);
-
             const ITEM_STATUSES = ["Pending", "Picked", "Out of Stock", "Substituted"];
 
-            useEffect(() => {
-                setNewOrderCount(0);
-            }, []);
+            useEffect(() => { setNewOrderCount(0); }, []);
             
             useEffect(() => {
                 if (!firebaseInstances) return;
@@ -769,11 +789,7 @@
                     setLoading(false);
                 }, (error) => {
                     console.error("Error fetching orders:", error);
-                        if (error.code === 'permission-denied') {
-                            showModal("Could not load orders due to a permissions issue. Please check the security rules in your Firebase project.");
-                        } else {
-                            showModal("Failed to load orders.");
-                        }
+                    if (error.code === 'permission-denied') { showModal("Could not load orders due to a permissions issue. Please check the security rules in your Firebase project."); } else { showModal("Failed to load orders."); }
                     setLoading(false);
                 });
                 return () => unsubscribe();
@@ -782,9 +798,7 @@
             useEffect(() => {
                 if (selectedOrder) {
                     const updatedSelectedOrder = orders.find(o => o.id === selectedOrder.id);
-                    if (updatedSelectedOrder) {
-                        setSelectedOrder(updatedSelectedOrder);
-                    }
+                    if (updatedSelectedOrder) setSelectedOrder(updatedSelectedOrder);
                 }
             }, [orders]);
             
@@ -792,46 +806,27 @@
                 try {
                     const orderRef = window.doc(firebaseInstances.primaryDb, 'orders', orderId);
                     await window.updateDoc(orderRef, { status });
-                } catch (error) {
-                    console.error("Error updating order status:", error);
-                    showModal("Failed to update order status.");
-                }
+                } catch (error) { console.error("Error updating order status:", error); showModal("Failed to update order status."); }
             };
             
             const updateItemStatus = async (orderId, itemIndex, status) => {
                 const orderToUpdate = orders.find(o => o.id === orderId);
                 if (!orderToUpdate) return;
-
-                const updatedItems = orderToUpdate.items.map((item, index) => {
-                    if (index === itemIndex) {
-                        return { ...item, status: status };
-                    }
-                    return item;
-                });
-                
+                const updatedItems = orderToUpdate.items.map((item, index) => index === itemIndex ? { ...item, status: status } : item);
                 try {
                     const orderRef = window.doc(firebaseInstances.primaryDb, 'orders', orderId);
                     await window.updateDoc(orderRef, { items: updatedItems });
-                } catch (error) {
-                    console.error("Error updating item status:", error);
-                    showModal("Failed to update item status.");
-                }
+                } catch (error) { console.error("Error updating item status:", error); showModal("Failed to update item status."); }
             };
 
             const handleSendMessage = async () => {
                 if (!newMessage.trim() || !selectedOrder) return;
-                const updatedCommunication = [
-                    ...(selectedOrder.communication || []),
-                    { sender: user.username, message: newMessage, timestamp: new Date() }
-                ];
+                const updatedCommunication = [...(selectedOrder.communication || []), { sender: user.username, message: newMessage, timestamp: new Date() }];
                 try {
                     const orderRef = window.doc(firebaseInstances.primaryDb, 'orders', selectedOrder.id);
                     await window.updateDoc(orderRef, { communication: updatedCommunication });
                     setNewMessage("");
-                } catch (error) {
-                    console.error("Error sending message:", error);
-                    showModal("Failed to send message.");
-                }
+                } catch (error) { console.error("Error sending message:", error); showModal("Failed to send message."); }
             };
 
             const handleSelectOrder = async (order) => {
@@ -840,9 +835,7 @@
                     try {
                         const orderRef = window.doc(firebaseInstances.primaryDb, 'orders', order.id);
                         await window.updateDoc(orderRef, { isNew: false });
-                    } catch (error) {
-                        console.error("Error marking order as seen:", error);
-                    }
+                    } catch (error) { console.error("Error marking order as seen:", error); }
                 }
             };
             
@@ -852,29 +845,18 @@
                     await window.updateDoc(orderRef, { archived: true });
                     setSelectedOrder(null);
                     showModal("Order archived successfully.");
-                } catch (error) {
-                    console.error("Error archiving order:", error);
-                    showModal("Failed to archive order.");
-                }
+                } catch (error) { console.error("Error archiving order:", error); showModal("Failed to archive order."); }
             }
 
             const getOrderStatusColorClass = (status) => {
                 switch (status) {
-                    case 'Pending':
-                        return 'bg-red-100 border-red-300 hover:bg-red-200';
-                    case 'Processing':
-                    case 'Waiting for Supplier':
-                        return 'bg-orange-100 border-orange-300 hover:bg-orange-200';
-                    case 'Awaiting Pickup':
-                        return 'bg-yellow-200 border-yellow-400 hover:bg-yellow-300';
-                    case 'In Transit':
-                        return 'bg-yellow-100 border-yellow-300 hover:bg-yellow-200';
-                    case 'Delivered':
-                        return 'bg-green-100 border-green-300 hover:bg-green-200';
-                    case 'Cancelled':
-                        return 'bg-slate-200 border-slate-400 text-gray-500';
-                    default:
-                        return 'bg-white hover:bg-gray-50';
+                    case 'Pending': return 'bg-red-100 border-red-300 hover:bg-red-200';
+                    case 'Processing': case 'Waiting for Supplier': return 'bg-orange-100 border-orange-300 hover:bg-orange-200';
+                    case 'Awaiting Pickup': return 'bg-yellow-200 border-yellow-400 hover:bg-yellow-300';
+                    case 'In Transit': return 'bg-yellow-100 border-yellow-300 hover:bg-yellow-200';
+                    case 'Delivered': return 'bg-green-100 border-green-300 hover:bg-green-200';
+                    case 'Cancelled': return 'bg-slate-200 border-slate-400 text-gray-500';
+                    default: return 'bg-white hover:bg-gray-50';
                 }
             };
 
@@ -883,7 +865,7 @@
             const filteredOrders = orders.filter(order => viewArchived ? order.archived : !order.archived);
 
             return (
-                 <div className="p-4 sm:p-8 grid grid-cols-1 md:grid-cols-3 gap-8">
+                 <div className="p-4 sm:p-6 lg:p-8 grid grid-cols-1 md:grid-cols-3 gap-8">
                     <div className="md:col-span-1">
                         <div className="flex justify-between items-center mb-6">
                             <h2 className="text-3xl font-bold">All Orders</h2>
@@ -900,13 +882,8 @@
                                 const statusColorClass = getOrderStatusColorClass(order.status);
                                 const isSelected = selectedOrder?.id === order.id;
                                 const isNewClass = order.isNew && !isSelected ? 'border-4 border-yellow-400' : 'border';
-
                                 return (
-                                    <div 
-                                        key={order.id} 
-                                        onClick={() => handleSelectOrder(order)} 
-                                        className={`p-4 rounded-lg cursor-pointer relative transition-colors ${isNewClass} ${isSelected ? 'border-4 border-blue-600 bg-blue-100' : statusColorClass}`}
-                                    >
+                                    <div key={order.id} onClick={() => handleSelectOrder(order)} className={`p-4 rounded-lg cursor-pointer relative transition-colors ${isNewClass} ${isSelected ? 'border-4 border-blue-600 bg-blue-100' : statusColorClass}`}>
                                         {order.isNew && !isSelected && <span className="absolute -top-2 -right-2 text-xs font-bold bg-yellow-400 text-yellow-900 px-2 py-1 rounded-full animate-pulse">NEW</span>}
                                         <p className="font-semibold">Order #{order.id.substring(0, 6)}... ({order.username})</p>
                                         <p>Site: {order.siteName}</p>
@@ -921,34 +898,17 @@
                         {selectedOrder ? (
                             <div>
                                 <h3 className="text-2xl font-bold mb-4">Manage Order #{selectedOrder.id.substring(0, 6)}</h3>
-                                
                                 <div className="mb-6 p-4 border rounded-lg bg-gray-50">
                                     <label className="block font-semibold mb-3 text-gray-700">Order Progress</label>
-                                    <OrderStatusChecklist 
-                                        currentStatus={selectedOrder.status}
-                                        onStatusUpdate={(newStatus) => updateOrderStatus(selectedOrder.id, newStatus)}
-                                    />
+                                    <OrderStatusChecklist currentStatus={selectedOrder.status} onStatusUpdate={(newStatus) => updateOrderStatus(selectedOrder.id, newStatus)} />
                                 </div>
-
                                 <div className="grid grid-cols-2 gap-4 mb-6">
-                                    <button 
-                                        onClick={() => updateOrderStatus(selectedOrder.id, "Waiting for Supplier")}
-                                        className={`p-2 rounded-lg text-white font-semibold transition-colors ${selectedOrder.status === 'Waiting for Supplier' ? 'bg-orange-500' : 'bg-orange-400 hover:bg-orange-500'}`}
-                                    >
-                                        Set to: Waiting for Supplier
-                                    </button>
-                                    <button 
-                                        onClick={() => updateOrderStatus(selectedOrder.id, "Cancelled")}
-                                        className={`p-2 rounded-lg text-white font-semibold transition-colors ${selectedOrder.status === 'Cancelled' ? 'bg-red-600' : 'bg-red-500 hover:bg-red-600'}`}
-                                    >
-                                       Set to: Cancelled
-                                    </button>
+                                    <button onClick={() => updateOrderStatus(selectedOrder.id, "Waiting for Supplier")} className={`p-2 rounded-lg text-white font-semibold transition-colors ${selectedOrder.status === 'Waiting for Supplier' ? 'bg-orange-500' : 'bg-orange-400 hover:bg-orange-500'}`}>Set to: Waiting for Supplier</button>
+                                    <button onClick={() => updateOrderStatus(selectedOrder.id, "Cancelled")} className={`p-2 rounded-lg text-white font-semibold transition-colors ${selectedOrder.status === 'Cancelled' ? 'bg-red-600' : 'bg-red-500 hover:bg-red-600'}`}>Set to: Cancelled</button>
                                 </div>
-
                                 <p className="mb-1"><span className="font-semibold">Orderer:</span> {selectedOrder.username}</p>
                                 <p className="mb-4"><span className="font-semibold">Site:</span> {selectedOrder.siteName}</p>
                                 {selectedOrder.specialRequests && <p className="mb-4 p-3 bg-yellow-100 border border-yellow-200 rounded-lg"><span className="font-semibold">Special Requests:</span> {selectedOrder.specialRequests}</p>}
-                                
                                 <h4 className="text-xl font-semibold mt-6 mb-2">Items</h4>
                                 <div className="space-y-2">
                                     {selectedOrder.items.map((item, index) => (
@@ -960,7 +920,6 @@
                                         </div>
                                     ))}
                                 </div>
-
                                 <h4 className="text-xl font-semibold mt-6 mb-2">Communication</h4>
                                 <div className="border rounded-lg p-4 h-48 overflow-y-auto bg-gray-50 mb-4">
                                     {(selectedOrder.communication || []).length === 0 && <p className="text-gray-500">No messages yet.</p>}
@@ -989,7 +948,7 @@
         const UserManagementPage = () => {
             const { users, firebaseInstances, showModal } = useAppContext();
             const [editingUser, setEditingUser] = useState(null);
-            const [newUser, setNewUser] = useState({ username: '', pin: '', role: 'orderer' });
+            const [newUser, setNewUser] = useState({ username: '', pin: '', role: 'orderer', fullName: '', phoneNumber: '' });
 
             const handleAddUser = async (e) => {
                 e.preventDefault();
@@ -1005,8 +964,14 @@
 
                 try {
                     const usersCol = window.collection(firebaseInstances.primaryDb, '/public/data/users');
-                    await window.addDoc(usersCol, { ...newUser, username: newUser.username.toUpperCase() });
-                    setNewUser({ username: '', pin: '', role: 'orderer' });
+                    await window.addDoc(usersCol, { 
+                        username: newUser.username.toUpperCase(),
+                        pin: newUser.pin,
+                        role: newUser.role,
+                        fullName: newUser.fullName.toUpperCase(),
+                        phoneNumber: newUser.phoneNumber
+                    });
+                    setNewUser({ username: '', pin: '', role: 'orderer', fullName: '', phoneNumber: '' });
                     showModal("User added successfully!");
                 } catch (error) {
                     console.error("Error adding user:", error);
@@ -1024,7 +989,9 @@
                     const userDoc = window.doc(firebaseInstances.primaryDb, '/public/data/users', editingUser.id);
                     await window.updateDoc(userDoc, {
                         pin: editingUser.pin,
-                        role: editingUser.role
+                        role: editingUser.role,
+                        fullName: editingUser.fullName.toUpperCase(),
+                        phoneNumber: editingUser.phoneNumber
                     });
                     setEditingUser(null);
                     showModal("User updated successfully!");
@@ -1035,7 +1002,7 @@
             };
 
             const handleDeleteUser = (userId) => {
-                 if (!firebaseInstances) return;
+                if (!firebaseInstances) return;
                 showModal("Are you sure you want to delete this user?", async () => {
                     try {
                         const userDoc = window.doc(firebaseInstances.primaryDb, '/public/data/users', userId);
@@ -1049,20 +1016,39 @@
             };
 
             return (
-                <div className="p-8">
+                <div className="p-4 sm:p-6 lg:p-8">
                     <h2 className="text-3xl font-bold mb-6">User Management</h2>
                     
                     <div className="bg-white p-6 rounded-lg shadow-md mb-8">
                         <h3 className="text-xl font-semibold mb-4">Add New User</h3>
-                        <form onSubmit={handleAddUser} className="grid grid-cols-1 md:grid-cols-4 gap-4 items-end">
-                            <input type="text" placeholder="Username" value={newUser.username} onChange={e => setNewUser({...newUser, username: e.target.value.toUpperCase()})} className="p-2 border rounded uppercase" />
-                            <input type="text" placeholder="4-Digit PIN" value={newUser.pin} maxLength="4" onChange={e => setNewUser({...newUser, pin: e.target.value.replace(/\D/,'')})} className="p-2 border rounded" />
-                            <select value={newUser.role} onChange={e => setNewUser({...newUser, role: e.target.value})} className="p-2 border rounded bg-white">
-                                <option value="orderer">Orderer</option>
-                                <option value="warehouse">Warehouse</option>
-                                <option value="admin">Admin</option>
-                            </select>
-                            <button type="submit" className="bg-green-500 text-white p-2 rounded hover:bg-green-600">Add User</button>
+                        <form onSubmit={handleAddUser} className="space-y-4">
+                            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                                <div>
+                                    <label className="block text-sm font-medium text-gray-700">Username</label>
+                                    <input type="text" placeholder="Username" value={newUser.username} onChange={e => setNewUser({...newUser, username: e.target.value.toUpperCase()})} className="mt-1 p-2 border rounded w-full uppercase" required/>
+                                </div>
+                                <div>
+                                    <label className="block text-sm font-medium text-gray-700">Full Name</label>
+                                    <input type="text" placeholder="Full Name" value={newUser.fullName} onChange={e => setNewUser({...newUser, fullName: e.target.value.toUpperCase()})} className="mt-1 p-2 border rounded w-full uppercase" />
+                                </div>
+                                <div>
+                                    <label className="block text-sm font-medium text-gray-700">Phone Number</label>
+                                    <input type="text" placeholder="Phone Number" value={newUser.phoneNumber} onChange={e => setNewUser({...newUser, phoneNumber: e.target.value})} className="mt-1 p-2 border rounded w-full" />
+                                </div>
+                                <div>
+                                    <label className="block text-sm font-medium text-gray-700">4-Digit PIN</label>
+                                    <input type="text" placeholder="4-Digit PIN" value={newUser.pin} maxLength="4" onChange={e => setNewUser({...newUser, pin: e.target.value.replace(/\D/,'')})} className="mt-1 p-2 border rounded w-full" required/>
+                                </div>
+                                <div>
+                                    <label className="block text-sm font-medium text-gray-700">Role</label>
+                                    <select value={newUser.role} onChange={e => setNewUser({...newUser, role: e.target.value})} className="mt-1 p-2 border rounded w-full bg-white">
+                                        <option value="orderer">Orderer</option>
+                                        <option value="warehouse">Warehouse</option>
+                                        <option value="admin">Admin</option>
+                                    </select>
+                                </div>
+                            </div>
+                            <button type="submit" className="w-full bg-green-500 text-white p-2 rounded hover:bg-green-600">Add User</button>
                         </form>
                     </div>
 
@@ -1070,28 +1056,32 @@
                         <h3 className="text-xl font-semibold mb-4">Existing Users</h3>
                         <div className="space-y-4">
                             {users.map(user => (
-                                <div key={user.id} className="p-4 border rounded-lg flex flex-col md:flex-row justify-between items-center">
+                                <div key={user.id} className="p-4 border rounded-lg flex flex-col md:flex-row justify-between md:items-center">
                                     {editingUser && editingUser.id === user.id ? (
-                                        <>
-                                            <span className="font-semibold text-lg mb-2 md:mb-0">{user.username}</span>
-                                            <input type="text" value={editingUser.pin} maxLength="4" onChange={e => setEditingUser({...editingUser, pin: e.target.value.replace(/\D/,'')})} className="p-2 border rounded w-24 text-center" />
-                                            <select value={editingUser.role} onChange={e => setEditingUser({...editingUser, role: e.target.value})} className="p-2 border rounded bg-white">
-                                                <option value="orderer">Orderer</option>
-                                                <option value="warehouse">Warehouse</option>
-                                                <option value="admin">Admin</option>
-                                            </select>
-                                            <div className="flex space-x-2 mt-2 md:mt-0">
-                                                <button onClick={handleUpdateUser} className="bg-blue-500 text-white px-3 py-1 rounded hover:bg-blue-600">Save</button>
-                                                <button onClick={() => setEditingUser(null)} className="bg-gray-500 text-white px-3 py-1 rounded hover:bg-gray-600">Cancel</button>
+                                        <div className="w-full">
+                                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                                                <input type="text" value={editingUser.fullName} onChange={e => setEditingUser({...editingUser, fullName: e.target.value.toUpperCase()})} className="p-2 border rounded uppercase" placeholder="Full Name"/>
+                                                <input type="text" value={editingUser.phoneNumber} onChange={e => setEditingUser({...editingUser, phoneNumber: e.target.value})} className="p-2 border rounded" placeholder="Phone Number"/>
+                                                <input type="text" value={editingUser.pin} maxLength="4" onChange={e => setEditingUser({...editingUser, pin: e.target.value.replace(/\D/,'')})} className="p-2 border rounded" placeholder="PIN"/>
+                                                <select value={editingUser.role} onChange={e => setEditingUser({...editingUser, role: e.target.value})} className="p-2 border rounded bg-white">
+                                                    <option value="orderer">Orderer</option>
+                                                    <option value="warehouse">Warehouse</option>
+                                                    <option value="admin">Admin</option>
+                                                </select>
                                             </div>
-                                        </>
+                                            <div className="flex space-x-2 mt-4">
+                                                <button onClick={handleUpdateUser} className="bg-blue-500 text-white px-4 py-2 rounded hover:bg-blue-600">Save</button>
+                                                <button onClick={() => setEditingUser(null)} className="bg-gray-500 text-white px-4 py-2 rounded hover:bg-gray-600">Cancel</button>
+                                            </div>
+                                        </div>
                                     ) : (
                                         <>
-                                            <div>
-                                                <span className="font-semibold text-lg">{user.username}</span>
-                                                <span className="text-gray-600 ml-4">Role: {user.role}</span>
+                                            <div className="flex-grow mb-4 md:mb-0">
+                                                <p className="font-semibold text-lg">{user.fullName || 'No Name'} <span className="text-gray-500 font-normal">({user.username})</span></p>
+                                                <p className="text-sm text-gray-600">Phone: {user.phoneNumber || 'N/A'}</p>
+                                                <p className="text-sm text-gray-600">Role: <span className="font-medium">{user.role}</span></p>
                                             </div>
-                                            <div className="flex space-x-2 mt-2 md:mt-0">
+                                            <div className="flex space-x-2">
                                                 <button onClick={() => setEditingUser({...user})} className="bg-yellow-500 text-white px-3 py-1 rounded hover:bg-yellow-600">Edit</button>
                                                 <button onClick={() => handleDeleteUser(user.id)} className="bg-red-500 text-white px-3 py-1 rounded hover:bg-red-600">Delete</button>
                                             </div>
@@ -1107,45 +1097,24 @@
         
         const RequestToolModal = ({ tool, sites, onConfirm, onCancel }) => {
             const [selectedSite, setSelectedSite] = useState('');
-
-            useEffect(() => {
-                if (sites.length > 0) {
-                    setSelectedSite(sites[0].id);
-                }
-            }, [sites]);
-
+            useEffect(() => { if (sites.length > 0) setSelectedSite(sites[0].id); }, [sites]);
             const handleConfirm = () => {
-                if (!selectedSite) {
-                    alert("Please select a project site.");
-                    return;
-                }
+                if (!selectedSite) { alert("Please select a project site."); return; }
                 const site = sites.find(s => s.id === selectedSite);
                 onConfirm(tool, site);
             };
-
             return (
                 <div className="modal-overlay">
                     <div className="modal-content">
                         <h3 className="text-2xl font-bold mb-4">Request Tool</h3>
                         <p className="mb-2"><span className="font-semibold">Tool:</span> {tool.name}</p>
                         <p className="mb-4"><span className="font-semibold">Asset Tag:</span> {tool.assetTag}</p>
-                        
                         <div className="mb-6">
                             <label htmlFor="site-select-modal" className="block text-gray-700 font-bold mb-2">Select Project Site</label>
-                            <select 
-                                id="site-select-modal" 
-                                value={selectedSite} 
-                                onChange={e => setSelectedSite(e.target.value)} 
-                                className="w-full p-2 border rounded bg-white"
-                            >
-                                {sites.length === 0 ? (
-                                    <option disabled>Loading sites...</option>
-                                ) : (
-                                    sites.map(site => <option key={site.id} value={site.id}>{site.name}</option>)
-                                )}
+                            <select id="site-select-modal" value={selectedSite} onChange={e => setSelectedSite(e.target.value)} className="w-full p-2 border rounded bg-white">
+                                {sites.length === 0 ? <option disabled>Loading sites...</option> : sites.map(site => <option key={site.id} value={site.id}>{site.name}</option>)}
                             </select>
                         </div>
-                        
                         <div className="flex justify-end space-x-4">
                             <button onClick={onCancel} className="px-6 py-2 rounded-md bg-gray-200 text-gray-800 hover:bg-gray-300">Cancel</button>
                             <button onClick={handleConfirm} className="px-6 py-2 rounded-md bg-blue-600 text-white hover:bg-blue-700">Confirm Request</button>
@@ -1165,30 +1134,19 @@
 
             useEffect(() => {
                 if (!firebaseInstances) return;
-                
                 const toolsCol = window.collection(firebaseInstances.primaryDb, '/public/data/tools');
-                
                 const unsubscribe = onSnapshot(toolsCol, (snapshot) => {
-                    const toolsData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-                    setTools(toolsData);
+                    setTools(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
                     setLoading(false);
-                }, (error) => {
-                    console.error("Error fetching tools:", error);
-                    showModal("Failed to load tools. Please check Firebase rules.");
-                    setLoading(false);
-                });
-
+                }, (error) => { console.error("Error fetching tools:", error); showModal("Failed to load tools."); setLoading(false); });
                 const fetchSites = async () => {
                     try {
                         const sitesCol = window.collection(firebaseInstances.secondaryDb, '/artifacts/default-app-id/public/data/sites');
                         const sitesSnapshot = await window.getDocs(sitesCol);
                         setSites(sitesSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
-                    } catch (error) {
-                        console.error("Error fetching sites:", error);
-                    }
+                    } catch (error) { console.error("Error fetching sites:", error); }
                 };
                 fetchSites();
-
                 return () => unsubscribe();
             }, [firebaseInstances]);
 
@@ -1198,24 +1156,12 @@
                     await window.runTransaction(firebaseInstances.primaryDb, async (transaction) => {
                         const toolDoc = await transaction.get(toolRef);
                         if (!toolDoc.exists()) throw new Error("Tool does not exist!");
-                        if (toolDoc.data().status !== 'Available') throw new Error("Tool is no longer available for request.");
-                        
-                        transaction.update(toolRef, {
-                            status: 'Pending Approval',
-                            requestedBy: user.username,
-                            requestedById: user.id,
-                            locationId: site.id,
-                            locationName: site.name,
-                            requestedDate: window.serverTimestamp()
-                        });
+                        if (toolDoc.data().status !== 'Available') throw new Error("Tool is no longer available.");
+                        transaction.update(toolRef, { status: 'Pending Approval', requestedBy: user.username, requestedById: user.id, locationId: site.id, locationName: site.name, requestedDate: window.serverTimestamp() });
                     });
                     showModal(`Request for "${tool.name} (${tool.assetTag})" submitted successfully!`);
-                } catch (error) {
-                    console.error("Error requesting tool:", error);
-                    showModal(`Could not request tool. Reason: ${error.message}`);
-                } finally {
-                    setToolToRequest(null);
-                }
+                } catch (error) { console.error("Error requesting tool:", error); showModal(`Could not request tool. Reason: ${error.message}`);
+                } finally { setToolToRequest(null); }
             };
             
             const getStatusClass = (status) => {
@@ -1229,36 +1175,29 @@
                 }
             };
 
-            const filteredTools = tools
-                .filter(tool => tool.condition === 'Good' && tool.status === 'Available')
-                .filter(tool =>
-                    tool.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                    (tool.assetTag && tool.assetTag.toLowerCase().includes(searchTerm.toLowerCase()))
-                );
+            const filteredTools = tools.filter(tool => tool.condition === 'Good' && tool.status === 'Available').filter(tool => tool.name.toLowerCase().includes(searchTerm.toLowerCase()) || (tool.assetTag && tool.assetTag.toLowerCase().includes(searchTerm.toLowerCase())));
 
             if (loading) return <LoadingSpinner message="Loading Tools..." />;
 
             return (
                 <>
-                    {toolToRequest && (
-                        <RequestToolModal 
-                            tool={toolToRequest}
-                            sites={sites}
-                            onConfirm={handleRequestConfirm}
-                            onCancel={() => setToolToRequest(null)}
-                        />
-                    )}
-                    <div className="p-4 sm:p-8">
+                    {toolToRequest && <RequestToolModal tool={toolToRequest} sites={sites} onConfirm={handleRequestConfirm} onCancel={() => setToolToRequest(null)} />}
+                    <div className="p-4 sm:p-6 lg:p-8">
                         <h2 className="text-3xl font-bold mb-6">Tools Library</h2>
-                        <input 
-                            type="text" 
-                            placeholder="Search by tool name or asset tag..." 
-                            className="w-full p-3 mb-6 border rounded-lg shadow-sm uppercase" 
-                            value={searchTerm} 
-                            onChange={e => setSearchTerm(e.target.value.toUpperCase())} 
-                        />
+                        <input type="text" placeholder="Search by tool name or asset tag..." className="w-full p-3 mb-6 border rounded-lg shadow-sm uppercase" value={searchTerm} onChange={e => setSearchTerm(e.target.value.toUpperCase())} />
                         <div className="bg-white p-6 rounded-lg shadow-md">
-                            <div className="overflow-x-auto">
+                            <div className="md:hidden space-y-4">
+                                {filteredTools.map(tool => (
+                                    <div key={tool.id} className="bg-gray-50 p-4 rounded-lg shadow">
+                                        <div className="font-bold text-lg">{tool.name}</div>
+                                        <div className="text-sm text-gray-600">Asset Tag: <span className="font-semibold">{tool.assetTag}</span></div>
+                                        <div className="text-sm text-gray-600">Status: <span className={`ml-2 px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${getStatusClass(tool.status)}`}>{tool.status}</span></div>
+                                        <div className="text-sm text-gray-600">Location: <span className="font-semibold">{tool.locationName || 'N/A'}</span></div>
+                                        <button onClick={() => setToolToRequest(tool)} className="mt-4 w-full bg-blue-500 text-white px-3 py-2 rounded hover:bg-blue-600">Request Borrow</button>
+                                    </div>
+                                ))}
+                            </div>
+                            <div className="hidden md:block overflow-x-auto">
                                 <table className="min-w-full">
                                     <thead className="bg-gray-200">
                                         <tr>
@@ -1274,15 +1213,9 @@
                                             <tr key={tool.id}>
                                                 <td className="px-6 py-4 whitespace-nowrap font-medium">{tool.name}</td>
                                                 <td className="px-6 py-4 whitespace-nowrap font-semibold">{tool.assetTag}</td>
-                                                <td className="px-6 py-4 whitespace-nowrap">
-                                                    <span className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${getStatusClass(tool.status)}`}>
-                                                        {tool.status}
-                                                    </span>
-                                                </td>
+                                                <td className="px-6 py-4 whitespace-nowrap"><span className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${getStatusClass(tool.status)}`}>{tool.status}</span></td>
                                                 <td className="px-6 py-4 whitespace-nowrap">{tool.locationName || 'N/A'}</td>
-                                                <td className="px-6 py-4 whitespace-nowrap">
-                                                    <button onClick={() => setToolToRequest(tool)} className="bg-blue-500 text-white px-3 py-1 rounded hover:bg-blue-600">Request Borrow</button>
-                                                </td>
+                                                <td className="px-6 py-4 whitespace-nowrap"><button onClick={() => setToolToRequest(tool)} className="bg-blue-500 text-white px-3 py-1 rounded hover:bg-blue-600">Request Borrow</button></td>
                                             </tr>
                                         ))}
                                     </tbody>
@@ -1303,18 +1236,10 @@
                 if (!firebaseInstances || !user) return;
                 const toolsCol = window.collection(firebaseInstances.primaryDb, '/public/data/tools');
                 const q = window.query(toolsCol, where("requestedById", "==", user.id));
-
                 const unsubscribe = onSnapshot(q, (snapshot) => {
-                    const requestsData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }))
-                        .sort((a, b) => (b.requestedDate?.seconds || 0) - (a.requestedDate?.seconds || 0));
-                    setMyRequests(requestsData);
+                    setMyRequests(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })).sort((a, b) => (b.requestedDate?.seconds || 0) - (a.requestedDate?.seconds || 0)));
                     setLoading(false);
-                }, (error) => {
-                    console.error("Error fetching my tool requests:", error);
-                    showModal("Failed to load your tool requests.");
-                    setLoading(false);
-                });
-
+                }, (error) => { console.error("Error fetching my tool requests:", error); showModal("Failed to load your tool requests."); setLoading(false); });
                 return () => unsubscribe();
             }, [firebaseInstances, user]);
             
@@ -1332,40 +1257,46 @@
             if (loading) return <LoadingSpinner message="Loading Your Tool Requests..." />;
 
             return (
-                <div className="p-4 sm:p-8">
+                <div className="p-4 sm:p-6 lg:p-8">
                     <h2 className="text-3xl font-bold mb-6">My Tool Requests</h2>
                     <div className="bg-white p-6 rounded-lg shadow-md">
-                        {myRequests.length === 0 ? (
-                            <p className="text-center text-gray-500">You have not requested any tools.</p>
-                        ) : (
-                            <div className="overflow-x-auto">
-                                <table className="min-w-full">
-                                    <thead className="bg-gray-200">
-                                        <tr>
-                                            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Tool Name</th>
-                                            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Asset Tag</th>
-                                            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Requested For Site</th>
-                                            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Date Requested</th>
-                                            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Request Status</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody className="bg-white divide-y divide-gray-200">
-                                        {myRequests.map(req => (
-                                            <tr key={req.id}>
-                                                <td className="px-6 py-4 whitespace-nowrap font-medium">{req.name}</td>
-                                                <td className="px-6 py-4 whitespace-nowrap font-semibold">{req.assetTag}</td>
-                                                <td className="px-6 py-4 whitespace-nowrap">{req.locationName}</td>
-                                                <td className="px-6 py-4 whitespace-nowrap">{req.requestedDate?.toDate().toLocaleString()}</td>
-                                                <td className="px-6 py-4 whitespace-nowrap">
-                                                    <span className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${getStatusClass(req.status)}`}>
-                                                        {req.status}
-                                                    </span>
-                                                </td>
+                        {myRequests.length === 0 ? <p className="text-center text-gray-500">You have not requested any tools.</p> : (
+                            <>
+                                <div className="md:hidden space-y-4">
+                                    {myRequests.map(req => (
+                                        <div key={req.id} className="bg-gray-50 p-4 rounded-lg shadow">
+                                            <div className="font-bold text-lg">{req.name} <span className="font-normal">({req.assetTag})</span></div>
+                                            <div className="text-sm text-gray-600">Site: <span className="font-semibold">{req.locationName}</span></div>
+                                            <div className="text-sm text-gray-600">Requested: <span className="font-semibold">{req.requestedDate?.toDate().toLocaleString()}</span></div>
+                                            <div className="text-sm text-gray-600">Status: <span className={`ml-2 px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${getStatusClass(req.status)}`}>{req.status}</span></div>
+                                        </div>
+                                    ))}
+                                </div>
+                                <div className="hidden md:block overflow-x-auto">
+                                    <table className="min-w-full">
+                                        <thead className="bg-gray-200">
+                                            <tr>
+                                                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Tool Name</th>
+                                                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Asset Tag</th>
+                                                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Requested For Site</th>
+                                                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Date Requested</th>
+                                                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Request Status</th>
                                             </tr>
-                                        ))}
-                                    </tbody>
-                                </table>
-                            </div>
+                                        </thead>
+                                        <tbody className="bg-white divide-y divide-gray-200">
+                                            {myRequests.map(req => (
+                                                <tr key={req.id}>
+                                                    <td className="px-6 py-4 whitespace-nowrap font-medium">{req.name}</td>
+                                                    <td className="px-6 py-4 whitespace-nowrap font-semibold">{req.assetTag}</td>
+                                                    <td className="px-6 py-4 whitespace-nowrap">{req.locationName}</td>
+                                                    <td className="px-6 py-4 whitespace-nowrap">{req.requestedDate?.toDate().toLocaleString()}</td>
+                                                    <td className="px-6 py-4 whitespace-nowrap"><span className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${getStatusClass(req.status)}`}>{req.status}</span></td>
+                                                </tr>
+                                            ))}
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </>
                         )}
                     </div>
                 </div>
@@ -1381,130 +1312,77 @@
             const [editingTool, setEditingTool] = useState(null);
             const [searchTerm, setSearchTerm] = useState("");
             const [activeTab, setActiveTab] = useState('dashboard');
-
             const TOOL_CONDITIONS = ["Good", "Needs Repair", "Under Maintenance", "For Disposal"];
 
             useEffect(() => {
                 if (!firebaseInstances) return;
                 const toolsCol = window.collection(firebaseInstances.primaryDb, '/public/data/tools');
                 const unsubscribeTools = window.onSnapshot(toolsCol, (snapshot) => {
-                    const toolsData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-                    setTools(toolsData);
+                    setTools(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
                     setLoading(false);
-                }, (error) => {
-                    console.error("Error fetching tools:", error);
-                    showModal("Failed to load tools.");
-                    setLoading(false);
-                });
-
+                }, (error) => { console.error("Error fetching tools:", error); showModal("Failed to load tools."); setLoading(false); });
                 const fetchSites = async () => {
                     try {
                         const sitesCol = window.collection(firebaseInstances.secondaryDb, '/artifacts/default-app-id/public/data/sites');
                         const sitesSnapshot = await window.getDocs(sitesCol);
                         setSites(sitesSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
-                    } catch (error) {
-                        console.error("Error fetching sites:", error);
-                    }
+                    } catch (error) { console.error("Error fetching sites:", error); }
                 };
                 fetchSites();
-
                 return () => unsubscribeTools();
             }, [firebaseInstances]);
 
             const handleAddTool = async (e) => {
                 e.preventDefault();
-                if (!newToolData.name.trim() || !newToolData.locationId) {
-                    showModal("Please provide a tool name and select a location.");
-                    return;
-                }
-
+                if (!newToolData.name.trim() || !newToolData.locationId) { showModal("Please provide a tool name and select a location."); return; }
                 const toolName = newToolData.name.trim();
                 const prefix = toolName.substring(0, 3).toUpperCase();
-                
                 const toolsQuery = query(collection(firebaseInstances.primaryDb, '/public/data/tools'), where("name", "==", toolName));
                 const querySnapshot = await getDocs(toolsQuery);
                 const newNumber = (querySnapshot.size + 1).toString().padStart(3, '0');
                 const assetTag = `${prefix}-${newNumber}`;
-
                 const site = sites.find(s => s.id === newToolData.locationId);
                 try {
                     const toolsCol = window.collection(firebaseInstances.primaryDb, '/public/data/tools');
-                    await window.addDoc(toolsCol, { 
-                        name: toolName, 
-                        assetTag: assetTag,
-                        status: 'Available',
-                        condition: 'Good',
-                        locationId: newToolData.locationId,
-                        locationName: newToolData.locationId === 'warehouse' ? 'Main Warehouse' : site?.name || 'Unknown Site'
-                    });
+                    await window.addDoc(toolsCol, { name: toolName, assetTag: assetTag, status: 'Available', condition: 'Good', locationId: newToolData.locationId, locationName: newToolData.locationId === 'warehouse' ? 'Main Warehouse' : site?.name || 'Unknown' });
                     setNewToolData({ name: '', locationId: '' });
                     showModal(`Tool added successfully with Asset Tag: ${assetTag}`);
-                } catch (error) {
-                    console.error("Error adding tool:", error);
-                    showModal("Failed to add tool.");
-                }
+                } catch (error) { console.error("Error adding tool:", error); showModal("Failed to add tool."); }
             };
 
             const handleDeleteTool = async (toolId) => {
                 showModal("Are you sure you want to delete this tool?", async () => {
                     try {
-                        const toolRef = window.doc(firebaseInstances.primaryDb, '/public/data/tools', toolId);
-                        await window.deleteDoc(toolRef);
+                        await window.deleteDoc(window.doc(firebaseInstances.primaryDb, '/public/data/tools', toolId));
                         showModal("Tool deleted successfully.");
-                    } catch (error) {
-                        console.error("Error deleting tool:", error);
-                        showModal("Failed to delete tool.");
-                    }
+                    } catch (error) { console.error("Error deleting tool:", error); showModal("Failed to delete tool."); }
                 });
             };
             
             const handleUpdateTool = async () => {
-                 if (!editingTool.name.trim() || !editingTool.assetTag.trim()) {
-                    showModal("Tool Name and Asset Tag cannot be empty.");
-                    return;
-                }
+                 if (!editingTool.name.trim() || !editingTool.assetTag.trim()) { showModal("Tool Name and Asset Tag cannot be empty."); return; }
                 try {
                     const toolRef = window.doc(firebaseInstances.primaryDb, '/public/data/tools', editingTool.id);
                     await window.updateDoc(toolRef, { name: editingTool.name, assetTag: editingTool.assetTag });
                     setEditingTool(null);
                     showModal("Tool updated successfully.");
-                } catch (error) {
-                    console.error("Error updating tool:", error);
-                    showModal("Failed to update tool.");
-                }
+                } catch (error) { console.error("Error updating tool:", error); showModal("Failed to update tool."); }
             };
 
             const handleCheckOutTool = async (toolId) => {
                 try {
                     const toolRef = window.doc(firebaseInstances.primaryDb, '/public/data/tools', toolId);
-                    await window.updateDoc(toolRef, { 
-                        status: 'Borrowed',
-                        borrowedDate: window.serverTimestamp()
-                    });
+                    await window.updateDoc(toolRef, { status: 'Borrowed', borrowedDate: window.serverTimestamp() });
                     showModal("Tool checked out successfully.");
-                } catch (error) {
-                    console.error("Error checking out tool:", error);
-                    showModal("Failed to check out tool.");
-                }
+                } catch (error) { console.error("Error checking out tool:", error); showModal("Failed to check out tool."); }
             };
 
             const handleReturnTool = async (toolId) => {
                  try {
                     const toolRef = window.doc(firebaseInstances.primaryDb, '/public/data/tools', toolId);
-                    await window.updateDoc(toolRef, { 
-                        status: 'Available',
-                        locationId: 'warehouse',
-                        locationName: 'Main Warehouse',
-                        borrowedBy: null,
-                        requestedBy: null,
-                        requestedById: null,
-                        requestedDate: null
-                    });
+                    await window.updateDoc(toolRef, { status: 'Available', locationId: 'warehouse', locationName: 'Main Warehouse', borrowedBy: null, requestedBy: null, requestedById: null, requestedDate: null });
                     showModal("Tool marked as returned to warehouse.");
-                } catch (error) {
-                    console.error("Error returning tool:", error);
-                    showModal("Failed to return tool.");
-                }
+                } catch (error) { console.error("Error returning tool:", error); showModal("Failed to return tool."); }
             };
             
             const handleConditionChange = async (toolId, newCondition) => {
@@ -1512,168 +1390,66 @@
                     const toolRef = window.doc(firebaseInstances.primaryDb, '/public/data/tools', toolId);
                     await window.updateDoc(toolRef, { condition: newCondition });
                     showModal("Tool condition updated successfully.");
-                } catch (error) {
-                    console.error("Error updating tool condition:", error);
-                    showModal("Failed to update tool condition.");
-                }
+                } catch (error) { console.error("Error updating tool condition:", error); showModal("Failed to update tool condition."); }
             };
 
-            const filteredTools = tools.filter(tool =>
-                tool.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                (tool.assetTag && tool.assetTag.toLowerCase().includes(searchTerm.toLowerCase()))
-            );
+            const filteredTools = tools.filter(tool => tool.name.toLowerCase().includes(searchTerm.toLowerCase()) || (tool.assetTag && tool.assetTag.toLowerCase().includes(searchTerm.toLowerCase())));
             
-            const dashboardData = {
-                total: tools.length,
-                good: tools.filter(t => t.condition === 'Good').length,
-                needsRepair: tools.filter(t => t.condition === 'Needs Repair').length,
-                underMaintenance: tools.filter(t => t.condition === 'Under Maintenance').length,
-                forDisposal: tools.filter(t => t.condition === 'For Disposal').length,
-            };
-
-            const locationSummary = tools.reduce((acc, tool) => {
-                const location = tool.locationName || 'Unknown';
-                acc[location] = (acc[location] || 0) + 1;
-                return acc;
-            }, {});
-
+            const dashboardData = { total: tools.length, good: tools.filter(t => t.condition === 'Good').length, needsRepair: tools.filter(t => t.condition === 'Needs Repair').length, underMaintenance: tools.filter(t => t.condition === 'Under Maintenance').length, forDisposal: tools.filter(t => t.condition === 'For Disposal').length };
+            const locationSummary = tools.reduce((acc, tool) => { acc[tool.locationName || 'Unknown'] = (acc[tool.locationName || 'Unknown'] || 0) + 1; return acc; }, {});
 
             if (loading) return <LoadingSpinner message="Loading Tools Management..." />;
 
             return (
-                <div className="p-4 sm:p-8">
+                <div className="p-4 sm:p-6 lg:p-8">
                     <h2 className="text-3xl font-bold mb-6">Tools Management</h2>
-                    
                     <div className="mb-6 border-b border-gray-200">
                         <nav className="-mb-px flex space-x-8" aria-label="Tabs">
-                            <button onClick={() => setActiveTab('dashboard')} className={`whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm ${activeTab === 'dashboard' ? 'border-blue-500 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'}`}>
-                                Dashboard
-                            </button>
-                            <button onClick={() => setActiveTab('summary')} className={`whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm ${activeTab === 'summary' ? 'border-blue-500 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'}`}>
-                                Location Summary
-                            </button>
-                            <button onClick={() => setActiveTab('manage')} className={`whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm ${activeTab === 'manage' ? 'border-blue-500 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'}`}>
-                                Manage All Tools
-                            </button>
+                            <button onClick={() => setActiveTab('dashboard')} className={`whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm ${activeTab === 'dashboard' ? 'border-blue-500 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'}`}>Dashboard</button>
+                            <button onClick={() => setActiveTab('summary')} className={`whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm ${activeTab === 'summary' ? 'border-blue-500 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'}`}>Location Summary</button>
+                            <button onClick={() => setActiveTab('manage')} className={`whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm ${activeTab === 'manage' ? 'border-blue-500 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'}`}>Manage All Tools</button>
                         </nav>
                     </div>
-
                     <div>
                         {activeTab === 'dashboard' && (
                             <div className="grid grid-cols-2 md:grid-cols-5 gap-4 text-center">
-                                <div className="bg-blue-500 text-white p-6 rounded-lg shadow-lg">
-                                    <p className="text-4xl font-bold">{dashboardData.total}</p>
-                                    <p className="text-lg">Total Tools</p>
-                                </div>
-                                <div className="bg-green-500 text-white p-6 rounded-lg shadow-lg">
-                                    <p className="text-4xl font-bold">{dashboardData.good}</p>
-                                    <p className="text-lg">Good Condition</p>
-                                </div>
-                                <div className="bg-yellow-500 text-white p-6 rounded-lg shadow-lg">
-                                    <p className="text-4xl font-bold">{dashboardData.needsRepair}</p>
-                                    <p className="text-lg">Needs Repair</p>
-                                </div>
-                                <div className="bg-orange-500 text-white p-6 rounded-lg shadow-lg">
-                                    <p className="text-4xl font-bold">{dashboardData.underMaintenance}</p>
-                                    <p className="text-lg">Maintenance</p>
-                                </div>
-                                <div className="bg-red-500 text-white p-6 rounded-lg shadow-lg">
-                                    <p className="text-4xl font-bold">{dashboardData.forDisposal}</p>
-                                    <p className="text-lg">For Disposal</p>
-                                </div>
+                                <div className="bg-blue-500 text-white p-6 rounded-lg shadow-lg"><p className="text-4xl font-bold">{dashboardData.total}</p><p className="text-lg">Total Tools</p></div>
+                                <div className="bg-green-500 text-white p-6 rounded-lg shadow-lg"><p className="text-4xl font-bold">{dashboardData.good}</p><p className="text-lg">Good Condition</p></div>
+                                <div className="bg-yellow-500 text-white p-6 rounded-lg shadow-lg"><p className="text-4xl font-bold">{dashboardData.needsRepair}</p><p className="text-lg">Needs Repair</p></div>
+                                <div className="bg-orange-500 text-white p-6 rounded-lg shadow-lg"><p className="text-4xl font-bold">{dashboardData.underMaintenance}</p><p className="text-lg">Maintenance</p></div>
+                                <div className="bg-red-500 text-white p-6 rounded-lg shadow-lg"><p className="text-4xl font-bold">{dashboardData.forDisposal}</p><p className="text-lg">For Disposal</p></div>
                             </div>
                         )}
-
                         {activeTab === 'summary' && (
                              <div className="bg-white p-6 rounded-lg shadow-md">
                                 <h3 className="text-xl font-semibold mb-4">Tool Count by Location</h3>
                                 <div className="overflow-x-auto">
-                                    <table className="min-w-full">
-                                        <thead className="bg-gray-200">
-                                            <tr>
-                                                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Location</th>
-                                                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Total Tools</th>
-                                            </tr>
-                                        </thead>
-                                        <tbody className="bg-white divide-y divide-gray-200">
-                                            {Object.entries(locationSummary).map(([location, count]) => (
-                                                <tr key={location}>
-                                                    <td className="px-6 py-4 whitespace-nowrap font-medium">{location}</td>
-                                                    <td className="px-6 py-4 whitespace-nowrap font-bold">{count}</td>
-                                                </tr>
-                                            ))}
-                                        </tbody>
+                                    <table className="min-w-full"><thead className="bg-gray-200"><tr><th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Location</th><th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Total Tools</th></tr></thead>
+                                        <tbody className="bg-white divide-y divide-gray-200">{Object.entries(locationSummary).map(([location, count]) => (<tr key={location}><td className="px-6 py-4 whitespace-nowrap font-medium">{location}</td><td className="px-6 py-4 whitespace-nowrap font-bold">{count}</td></tr>))}</tbody>
                                     </table>
                                 </div>
                             </div>
                         )}
-
                         {activeTab === 'manage' && (
                             <>
                                 <div className="bg-white p-6 rounded-lg shadow-md mb-8">
                                     <h3 className="text-xl font-semibold mb-4">Add New Tool</h3>
                                     <form onSubmit={handleAddTool} className="grid grid-cols-1 md:grid-cols-3 gap-4 items-end">
-                                        <div>
-                                            <label className="block text-sm font-medium text-gray-700">Tool Name</label>
-                                            <input type="text" placeholder="e.g., Grinder" value={newToolData.name} onChange={e => setNewToolData({...newToolData, name: e.target.value.toUpperCase()})} className="mt-1 p-2 border rounded w-full uppercase" />
-                                        </div>
-                                        <div>
-                                            <label className="block text-sm font-medium text-gray-700">Location (Site)</label>
-                                            <select value={newToolData.locationId} onChange={e => setNewToolData({...newToolData, locationId: e.target.value})} className="mt-1 w-full p-2 border rounded bg-white">
-                                                <option value="" disabled>Select a location</option>
-                                                <option value="warehouse">Main Warehouse</option>
-                                                {sites.map(site => <option key={site.id} value={site.id}>{site.name}</option>)}
-                                            </select>
-                                        </div>
+                                        <div><label className="block text-sm font-medium text-gray-700">Tool Name</label><input type="text" placeholder="e.g., Grinder" value={newToolData.name} onChange={e => setNewToolData({...newToolData, name: e.target.value.toUpperCase()})} className="mt-1 p-2 border rounded w-full uppercase" /></div>
+                                        <div><label className="block text-sm font-medium text-gray-700">Location (Site)</label><select value={newToolData.locationId} onChange={e => setNewToolData({...newToolData, locationId: e.target.value})} className="mt-1 w-full p-2 border rounded bg-white"><option value="" disabled>Select a location</option><option value="warehouse">Main Warehouse</option>{sites.map(site => <option key={site.id} value={site.id}>{site.name}</option>)}</select></div>
                                         <button type="submit" className="bg-green-500 text-white px-4 py-2 rounded hover:bg-green-600 h-10">Add Tool & Auto-Generate ID</button>
                                     </form>
                                 </div>
-
                                 <div className="bg-white p-6 rounded-lg shadow-md">
                                     <h3 className="text-xl font-semibold mb-4">Existing Tools</h3>
-                                    <input 
-                                        type="text" 
-                                        placeholder="Search by tool name or asset tag..." 
-                                        className="w-full p-3 mb-4 border rounded-lg shadow-sm uppercase" 
-                                        value={searchTerm} 
-                                        onChange={e => setSearchTerm(e.target.value.toUpperCase())} 
-                                    />
+                                    <input type="text" placeholder="Search by tool name or asset tag..." className="w-full p-3 mb-4 border rounded-lg shadow-sm uppercase" value={searchTerm} onChange={e => setSearchTerm(e.target.value.toUpperCase())} />
                                     <div className="space-y-4">
                                         {filteredTools.map(tool => (
                                             <div key={tool.id} className="p-4 border rounded-lg flex flex-col md:flex-row justify-between items-center gap-4">
                                                 {editingTool?.id === tool.id ? (
-                                                    <>
-                                                        <input type="text" value={editingTool.name} onChange={e => setEditingTool({...editingTool, name: e.target.value.toUpperCase()})} className="p-2 border rounded w-full md:w-auto uppercase" placeholder="Tool Name" />
-                                                        <input type="text" value={editingTool.assetTag} disabled className="p-2 border rounded w-full md:w-auto bg-gray-200" placeholder="Asset Tag" />
-                                                        <div className="flex space-x-2">
-                                                            <button onClick={handleUpdateTool} className="bg-blue-500 text-white px-3 py-1 rounded hover:bg-blue-600">Save</button>
-                                                            <button onClick={() => setEditingTool(null)} className="bg-gray-500 text-white px-3 py-1 rounded hover:bg-gray-600">Cancel</button>
-                                                        </div>
-                                                    </>
+                                                    <><input type="text" value={editingTool.name} onChange={e => setEditingTool({...editingTool, name: e.target.value.toUpperCase()})} className="p-2 border rounded w-full md:w-auto uppercase" placeholder="Tool Name" /><input type="text" value={editingTool.assetTag} disabled className="p-2 border rounded w-full md:w-auto bg-gray-200" placeholder="Asset Tag" /><div className="flex space-x-2"><button onClick={handleUpdateTool} className="bg-blue-500 text-white px-3 py-1 rounded hover:bg-blue-600">Save</button><button onClick={() => setEditingTool(null)} className="bg-gray-500 text-white px-3 py-1 rounded hover:bg-gray-600">Cancel</button></div></>
                                                 ) : (
-                                                    <>
-                                                        <div className="flex-grow">
-                                                            <p className="font-semibold text-lg">{tool.name} <span className="text-base font-normal text-gray-500">({tool.assetTag})</span></p>
-                                                            <p className="text-sm text-gray-600">Status: {tool.status} {tool.requestedBy && `(Req by ${tool.requestedBy} for ${tool.siteName})`}</p>
-                                                            <p className="text-xs text-gray-500">Location: {tool.locationName}</p>
-                                                        </div>
-                                                        <div className="flex flex-wrap items-center gap-2">
-                                                            <div>
-                                                                <label className="sr-only">Condition</label>
-                                                                <select 
-                                                                    value={tool.condition || 'Good'} 
-                                                                    onChange={(e) => handleConditionChange(tool.id, e.target.value)}
-                                                                    className="p-1 border rounded bg-white text-sm"
-                                                                >
-                                                                    {TOOL_CONDITIONS.map(c => <option key={c} value={c}>{c}</option>)}
-                                                                </select>
-                                                            </div>
-                                                            {tool.status === 'Approved' && <button onClick={() => handleCheckOutTool(tool.id)} className="bg-green-500 text-white px-3 py-1 rounded hover:bg-green-600">Check Out</button>}
-                                                            {tool.status === 'Borrowed' && <button onClick={() => handleReturnTool(tool.id)} className="bg-indigo-500 text-white px-3 py-1 rounded hover:bg-indigo-600">Mark Returned</button>}
-                                                            <button onClick={() => setEditingTool(tool)} className="bg-yellow-500 text-white px-3 py-1 rounded hover:bg-yellow-600">Edit</button>
-                                                            <button onClick={() => handleDeleteTool(tool.id)} className="bg-red-500 text-white px-3 py-1 rounded hover:bg-red-600">Delete</button>
-                                                        </div>
-                                                    </>
+                                                    <><div className="flex-grow"><p className="font-semibold text-lg">{tool.name} <span className="text-base font-normal text-gray-500">({tool.assetTag})</span></p><p className="text-sm text-gray-600">Status: {tool.status} {tool.requestedBy && `(Req by ${tool.requestedBy} for ${tool.siteName})`}</p><p className="text-xs text-gray-500">Location: {tool.locationName}</p></div><div className="flex flex-wrap items-center gap-2"><div><label className="sr-only">Condition</label><select value={tool.condition || 'Good'} onChange={(e) => handleConditionChange(tool.id, e.target.value)} className="p-1 border rounded bg-white text-sm">{TOOL_CONDITIONS.map(c => <option key={c} value={c}>{c}</option>)}</select></div>{tool.status === 'Approved' && <button onClick={() => handleCheckOutTool(tool.id)} className="bg-green-500 text-white px-3 py-1 rounded hover:bg-green-600">Check Out</button>}{tool.status === 'Borrowed' && <button onClick={() => handleReturnTool(tool.id)} className="bg-indigo-500 text-white px-3 py-1 rounded hover:bg-indigo-600">Mark Returned</button>}<button onClick={() => setEditingTool(tool)} className="bg-yellow-500 text-white px-3 py-1 rounded hover:bg-yellow-600">Edit</button><button onClick={() => handleDeleteTool(tool.id)} className="bg-red-500 text-white px-3 py-1 rounded hover:bg-red-600">Delete</button></div></>
                                                 )}
                                             </div>
                                         ))}
@@ -1696,51 +1472,47 @@
                 const toolsCol = window.collection(firebaseInstances.primaryDb, '/public/data/tools');
                 const q = window.query(toolsCol, where("status", "==", "Pending Approval"));
                 const unsubscribe = onSnapshot(q, (snapshot) => {
-                    const requestsData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-                    setRequests(requestsData);
+                    setRequests(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
                     setLoading(false);
-                }, (error) => {
-                    console.error("Error fetching tool requests:", error);
-                    showModal("Failed to load tool requests.");
-                    setLoading(false);
-                });
+                }, (error) => { console.error("Error fetching tool requests:", error); showModal("Failed to load tool requests."); setLoading(false); });
                 return () => unsubscribe();
             }, [firebaseInstances]);
 
             const handleApprove = async (toolId) => {
                 try {
-                    const toolRef = window.doc(firebaseInstances.primaryDb, '/public/data/tools', toolId);
-                    await window.updateDoc(toolRef, { status: 'Approved' });
+                    await window.updateDoc(window.doc(firebaseInstances.primaryDb, '/public/data/tools', toolId), { status: 'Approved' });
                     showModal("Request approved. Tool is ready for checkout.");
-                } catch (error) {
-                    console.error("Error approving request:", error);
-                    showModal("Failed to approve request.");
-                }
+                } catch (error) { console.error("Error approving request:", error); showModal("Failed to approve request."); }
             };
 
             const handleDeny = async (toolId) => {
                 try {
-                    const toolRef = window.doc(firebaseInstances.primaryDb, '/public/data/tools', toolId);
-                    await window.updateDoc(toolRef, { 
-                        status: 'Available',
-                        requestedBy: null,
-                        requestedById: null,
-                        requestedDate: null
-                    });
+                    await window.updateDoc(window.doc(firebaseInstances.primaryDb, '/public/data/tools', toolId), { status: 'Available', requestedBy: null, requestedById: null, requestedDate: null });
                     showModal("Request denied. Tool is now available again.");
-                } catch (error) {
-                    console.error("Error denying request:", error);
-                    showModal("Failed to deny request.");
-                }
+                } catch (error) { console.error("Error denying request:", error); showModal("Failed to deny request."); }
             };
             
             if (loading) return <LoadingSpinner message="Loading Tool Requests..." />;
 
             return (
-                <div className="p-4 sm:p-8">
+                <div className="p-4 sm:p-6 lg:p-8">
                     <h2 className="text-3xl font-bold mb-6">Pending Tool Requests</h2>
                      <div className="bg-white p-6 rounded-lg shadow-md">
-                         <div className="overflow-x-auto">
+                        <div className="md:hidden space-y-4">
+                            {requests.map(req => (
+                                <div key={req.id} className="bg-gray-50 p-4 rounded-lg shadow">
+                                    <div className="font-bold text-lg">{req.name} <span className="font-normal">({req.assetTag})</span></div>
+                                    <div className="text-sm text-gray-600">By: <span className="font-semibold">{req.requestedBy}</span></div>
+                                    <div className="text-sm text-gray-600">Site: <span className="font-semibold">{req.locationName}</span></div>
+                                    <div className="text-sm text-gray-600">Date: <span className="font-semibold">{req.requestedDate?.toDate().toLocaleDateString()}</span></div>
+                                    <div className="mt-4 flex space-x-2">
+                                        <button onClick={() => handleApprove(req.id)} className="flex-1 bg-green-500 text-white px-3 py-2 rounded hover:bg-green-600">Approve</button>
+                                        <button onClick={() => handleDeny(req.id)} className="flex-1 bg-red-500 text-white px-3 py-2 rounded hover:bg-red-600">Deny</button>
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                         <div className="hidden md:block overflow-x-auto">
                             <table className="min-w-full">
                                 <thead className="bg-gray-200">
                                     <tr>
@@ -1753,9 +1525,7 @@
                                     </tr>
                                 </thead>
                                 <tbody className="bg-white divide-y divide-gray-200">
-                                    {requests.length === 0 && (
-                                        <tr><td colSpan="6" className="text-center p-8 text-gray-500">No pending tool requests.</td></tr>
-                                    )}
+                                    {requests.length === 0 && (<tr><td colSpan="6" className="text-center p-8 text-gray-500">No pending tool requests.</td></tr>)}
                                     {requests.map(req => (
                                         <tr key={req.id}>
                                             <td className="px-6 py-4 whitespace-nowrap font-medium">{req.name}</td>
@@ -1777,147 +1547,116 @@
             );
         };
         
-        const ReportsPage = () => {
-            const { firebaseInstances, showModal } = useAppContext();
+        const ForecastingPage = () => {
+            const { firebaseInstances, showModal, showToast } = useAppContext();
+            const [inventory, setInventory] = useState([]);
             const [orders, setOrders] = useState([]);
-            const [tools, setTools] = useState([]);
             const [loading, setLoading] = useState(true);
+            const [daysOfStock, setDaysOfStock] = useState(30);
 
             useEffect(() => {
                 if (!firebaseInstances) return;
                 const fetchData = async () => {
+                    setLoading(true);
                     try {
-                        const ordersCol = window.collection(firebaseInstances.primaryDb, "orders");
-                        const ordersSnapshot = await window.getDocs(ordersCol);
-                        setOrders(ordersSnapshot.docs.map(doc => doc.data()));
+                        const inventoryCol = window.collection(firebaseInstances.secondaryDb, 'artifacts/default-app-id/public/data/inventory');
+                        const inventorySnapshot = await window.getDocs(inventoryCol);
+                        const inventoryData = inventorySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+                        setInventory(inventoryData);
 
-                        const toolsCol = window.collection(firebaseInstances.primaryDb, "/public/data/tools");
-                        const toolsSnapshot = await window.getDocs(toolsCol);
-                        setTools(toolsSnapshot.docs.map(doc => doc.data()));
+                        const ordersCol = window.collection(firebaseInstances.primaryDb, "orders");
+                        const ninetyDaysAgo = new Date();
+                        ninetyDaysAgo.setDate(ninetyDaysAgo.getDate() - 90);
+                        const q = query(ordersCol, where("createdAt", ">=", ninetyDaysAgo));
+                        const ordersSnapshot = await getDocs(q);
+                        const ordersData = ordersSnapshot.docs.map(doc => doc.data());
+                        setOrders(ordersData);
                     } catch (error) {
-                        console.error("Error fetching data for reports:", error);
-                        showModal("Failed to load data for reports.");
+                        console.error("Error fetching forecasting data:", error);
+                        showModal("Failed to load data for forecasting.");
                     } finally {
                         setLoading(false);
                     }
                 };
                 fetchData();
             }, [firebaseInstances]);
-            
-            if (loading) return <LoadingSpinner message="Generating Reports..." />;
+
+            const analysis = useMemo(() => {
+                if(inventory.length === 0) return [];
+
+                return inventory.map(item => {
+                    const totalOrdered = orders
+                        .flatMap(order => order.items || [])
+                        .filter(orderItem => orderItem.name === item.name)
+                        .reduce((sum, orderItem) => sum + orderItem.quantity, 0);
+
+                    const dailyUsage = totalOrdered / 90;
+                    const targetStock = dailyUsage * daysOfStock;
+                    const currentStock = item.qty || 0;
+                    const suggestedReorder = Math.max(0, Math.ceil(targetStock - currentStock));
+
+                    return {
+                        ...item,
+                        currentStock,
+                        dailyUsage: dailyUsage.toFixed(2),
+                        suggestedReorder,
+                    };
+                }).sort((a, b) => b.dailyUsage - a.dailyUsage);
+            }, [inventory, orders, daysOfStock]);
+
+            const handleAddToCart = (item, quantity) => {
+                if (quantity <= 0) return;
+                const savedCart = JSON.parse(localStorage.getItem('dlv_cart') || '{}');
+                const existingItem = savedCart[item.id];
+                const newCart = { ...savedCart, [item.id]: { ...item, quantity: (existingItem ? existingItem.quantity : 0) + quantity }};
+                localStorage.setItem('dlv_cart', JSON.stringify(newCart));
+                showToast(`${quantity} x ${item.name} added to cart.`, 'success');
+            };
+
+            if (loading) return <LoadingSpinner message="Analyzing Order Data..." />;
 
             return (
-                <div className="p-4 sm:p-8">
-                    <h2 className="text-3xl font-bold mb-6">Reports and Analytics</h2>
-                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-                        <div className="bg-white p-6 rounded-lg shadow-md">
-                            <h3 className="text-xl font-semibold mb-4 text-center">Orders by Status</h3>
-                            <OrdersByStatusChart orders={orders} />
-                        </div>
-                        <div className="bg-white p-6 rounded-lg shadow-md">
-                            <h3 className="text-xl font-semibold mb-4 text-center">Tools by Status</h3>
-                            <ToolsByStatusChart tools={tools} />
-                        </div>
-                         <div className="bg-white p-6 rounded-lg shadow-md lg:col-span-2">
-                            <h3 className="text-xl font-semibold mb-4 text-center">Orders Over Time (Last 30 Days)</h3>
-                            <OrdersOverTimeChart orders={orders} />
-                        </div>
+                <div className="p-4 sm:p-6 lg:p-8">
+                    <h2 className="text-3xl font-bold mb-6">Forecasting & Reorder Suggestions</h2>
+                    <div className="bg-white p-6 rounded-lg shadow-md mb-6">
+                         <label htmlFor="daysOfStock" className="block text-sm font-medium text-gray-700">Days of Stock to Keep on Hand</label>
+                         <input
+                            type="number"
+                            id="daysOfStock"
+                            value={daysOfStock}
+                            onChange={(e) => setDaysOfStock(parseInt(e.target.value, 10) || 0)}
+                            className="mt-1 p-2 border rounded-md w-full sm:w-1/4"
+                         />
+                    </div>
+                     <div className="bg-white p-6 rounded-lg shadow-md overflow-x-auto">
+                        <table className="min-w-full divide-y divide-gray-200">
+                            <thead className="bg-gray-50">
+                                <tr>
+                                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Item Name</th>
+                                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Current Stock</th>
+                                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Avg. Daily Usage (90 days)</th>
+                                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Suggested Reorder Qty</th>
+                                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Action</th>
+                                </tr>
+                            </thead>
+                            <tbody className="bg-white divide-y divide-gray-200">
+                                {analysis.map(item => (
+                                    <tr key={item.id}>
+                                        <td className="px-6 py-4 whitespace-nowrap">{item.name}</td>
+                                        <td className="px-6 py-4 whitespace-nowrap">{item.currentStock}</td>
+                                        <td className="px-6 py-4 whitespace-nowrap">{item.dailyUsage}</td>
+                                        <td className="px-6 py-4 whitespace-nowrap font-bold text-blue-600">{item.suggestedReorder}</td>
+                                        <td className="px-6 py-4 whitespace-nowrap">
+                                            {item.suggestedReorder > 0 && (
+                                                <button onClick={() => handleAddToCart(item, item.suggestedReorder)} className="bg-green-500 text-white px-3 py-1 rounded hover:bg-green-600">Add to Cart</button>
+                                            )}
+                                        </td>
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </table>
                     </div>
                 </div>
-            );
-        };
-        
-        const OrdersByStatusChart = ({ orders }) => {
-            if (!window.Recharts) return <div>Loading Chart...</div>;
-            const { ResponsiveContainer, PieChart, Pie, Cell, Tooltip, Legend } = window.Recharts;
-
-            const data = orders.reduce((acc, order) => {
-                const status = order.status || 'Unknown';
-                const existing = acc.find(item => item.name === status);
-                if (existing) {
-                    existing.value += 1;
-                } else {
-                    acc.push({ name: status, value: 1 });
-                }
-                return acc;
-            }, []);
-
-            const COLORS = ['#FF8042', '#0088FE', '#00C49F', '#FFBB28', '#A28CFF'];
-
-            return (
-                <ResponsiveContainer width="100%" height={300}>
-                    <PieChart>
-                        <Pie data={data} cx="50%" cy="50%" labelLine={false} label={({ name, percent }) => `${name}: ${(percent * 100).toFixed(0)}%`} outerRadius={100} fill="#8884d8" dataKey="value">
-                            {data.map((entry, index) => <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />)}
-                        </Pie>
-                        <Tooltip />
-                        <Legend />
-                    </PieChart>
-                </ResponsiveContainer>
-            );
-        };
-
-        const ToolsByStatusChart = ({ tools }) => {
-             if (!window.Recharts) return <div>Loading Chart...</div>;
-             const { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend } = window.Recharts;
-
-             const data = tools.reduce((acc, tool) => {
-                const status = tool.status || 'Unknown';
-                const existing = acc.find(item => item.name === status);
-                if (existing) {
-                    existing.count += 1;
-                } else {
-                    acc.push({ name: status, count: 1 });
-                }
-                return acc;
-            }, []);
-
-            return (
-                 <ResponsiveContainer width="100%" height={300}>
-                    <BarChart data={data} margin={{ top: 5, right: 30, left: 20, bottom: 5 }}>
-                        <CartesianGrid strokeDasharray="3 3" />
-                        <XAxis dataKey="name" />
-                        <YAxis />
-                        <Tooltip />
-                        <Legend />
-                        <Bar dataKey="count" fill="#8884d8" />
-                    </BarChart>
-                </ResponsiveContainer>
-            );
-        };
-
-        const OrdersOverTimeChart = ({ orders }) => {
-            if (!window.Recharts) return <div>Loading Chart...</div>;
-            const { ResponsiveContainer, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend } = window.Recharts;
-
-            const last30Days = new Date();
-            last30Days.setDate(last30Days.getDate() - 30);
-
-            const data = orders
-                .filter(order => order.createdAt && order.createdAt.toDate() > last30Days)
-                .reduce((acc, order) => {
-                    const date = order.createdAt.toDate().toLocaleDateString();
-                    const existing = acc.find(item => item.date === date);
-                    if (existing) {
-                        existing.orders += 1;
-                    } else {
-                        acc.push({ date, orders: 1 });
-                    }
-                    return acc;
-                }, [])
-                .sort((a,b) => new Date(a.date) - new Date(b.date));
-
-            return (
-                 <ResponsiveContainer width="100%" height={400}>
-                    <LineChart data={data} margin={{ top: 5, right: 30, left: 20, bottom: 5 }}>
-                        <CartesianGrid strokeDasharray="3 3" />
-                        <XAxis dataKey="date" />
-                        <YAxis />
-                        <Tooltip />
-                        <Legend />
-                        <Line type="monotone" dataKey="orders" stroke="#82ca9d" />
-                    </LineChart>
-                </ResponsiveContainer>
             );
         };
 
@@ -1928,29 +1667,12 @@
             const [showWelcome, setShowWelcome] = useState(true);
 
             useEffect(() => {
-                if (!user || !firebaseInstances || (user.role !== 'admin' && user.role !== 'warehouse')) {
-                    return;
-                }
-                const ordersQuery = window.query(
-                    window.collection(firebaseInstances.primaryDb, "orders"), 
-                    window.where("isNew", "==", true)
-                );
-                const toolsQuery = window.query(
-                    window.collection(firebaseInstances.primaryDb, "/public/data/tools"), 
-                    window.where("status", "==", "Pending Approval")
-                );
-
-                const unsubOrders = window.onSnapshot(ordersQuery, (snapshot) => {
-                    setNewOrderCount(snapshot.size);
-                });
-                const unsubTools = window.onSnapshot(toolsQuery, (snapshot) => {
-                    setNewToolRequestCount(snapshot.size);
-                });
-
-                return () => {
-                    unsubOrders();
-                    unsubTools();
-                };
+                if (!user || !firebaseInstances || (user.role !== 'admin' && user.role !== 'warehouse')) return;
+                const ordersQuery = window.query(window.collection(firebaseInstances.primaryDb, "orders"), where("isNew", "==", true));
+                const toolsQuery = window.query(window.collection(firebaseInstances.primaryDb, "/public/data/tools"), where("status", "==", "Pending Approval"));
+                const unsubOrders = window.onSnapshot(ordersQuery, (snapshot) => setNewOrderCount(snapshot.size));
+                const unsubTools = window.onSnapshot(toolsQuery, (snapshot) => setNewToolRequestCount(snapshot.size));
+                return () => { unsubOrders(); unsubTools(); };
             }, [user, firebaseInstances]);
 
             useEffect(() => {
@@ -1972,9 +1694,7 @@
             }
             
             if (!user) {
-                if (showWelcome) {
-                    return <WelcomePage onVideoEnd={() => setShowWelcome(false)} />;
-                }
+                if (showWelcome) return <WelcomePage onVideoEnd={() => setShowWelcome(false)} />;
                 return <LoginPage />;
             }
 
@@ -1989,7 +1709,7 @@
                     case 'tools_management': return <ToolsManagementPage />;
                     case 'tool_requests': return <ToolRequestsPage />;
                     case 'my_tool_requests': return <MyToolRequestsPage />;
-                    case 'reports': return <ReportsPage />;
+                    case 'forecasting': return <ForecastingPage />;
                     default: return <InventoryPage />;
                 }
             };

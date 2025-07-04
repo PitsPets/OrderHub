@@ -107,6 +107,14 @@
                 width: 100%;
             }
         }
+        /* For horizontal scrollbar styling */
+        .no-scrollbar::-webkit-scrollbar {
+            display: none;
+        }
+        .no-scrollbar {
+            -ms-overflow-style: none;  /* IE and Edge */
+            scrollbar-width: none;  /* Firefox */
+        }
     </style>
 </head>
 <body class="bg-gray-100">
@@ -325,7 +333,7 @@
         const Header = () => {
             const { user, logout } = useAppContext();
             return (
-                <header className="bg-white shadow-md p-4 flex flex-col sm:flex-row justify-between items-center space-y-2 sm:space-y-0">
+                <header className="bg-white p-4 flex flex-col sm:flex-row justify-between items-center space-y-2 sm:space-y-0">
                     <img src="https://i.imgur.com/pmh9SN0.png" alt="DLV Order Hub Logo" className="h-10" />
                     {user && (
                         <div className="flex flex-col sm:flex-row items-center space-y-2 sm:space-y-0 sm:space-x-4">
@@ -341,23 +349,18 @@
         
         const Nav = ({ setCurrentPage }) => {
             const { user, newOrderCount, setNewOrderCount, newToolRequestCount, setNewToolRequestCount } = useAppContext();
-            const [isMenuOpen, setIsMenuOpen] = useState(false);
 
             const handleNavClick = (page) => {
                 if (page === 'order_management') setNewOrderCount(0);
                 if (page === 'tool_requests') setNewToolRequestCount(0);
                 setCurrentPage(page);
-                setIsMenuOpen(false); // Close menu after clicking a link
             };
 
             if (!user) return null;
 
-            // Reusable nav link components to avoid repetition
-            const NavLinks = ({ mobile = false }) => {
-                const buttonClass = mobile 
-                    ? "block px-3 py-2 rounded-md text-base font-medium text-gray-300 hover:text-white hover:bg-gray-700 w-full text-left" 
-                    : "px-3 py-2 rounded-md text-sm font-medium text-gray-300 hover:text-white";
-                const flexButtonClass = `${buttonClass} flex items-center justify-between w-full text-left`;
+            const NavLinks = () => {
+                const buttonClass = "flex-shrink-0 px-4 py-2 rounded-md text-sm font-medium text-gray-300 hover:text-white hover:bg-gray-700 transition-colors";
+                const flexButtonClass = `${buttonClass} flex items-center space-x-2`;
 
                 return (
                     <>
@@ -365,21 +368,31 @@
                             <>
                                 <li><button onClick={() => handleNavClick('inventory')} className={buttonClass}>Inventory</button></li>
                                 <li><button onClick={() => handleNavClick('cart')} className={buttonClass}>Cart</button></li>
-                                <li><button onClick={() => handleNavClick('order_history')} className={buttonClass}>Order History</button></li>
-                                <li><button onClick={() => handleNavClick('tools')} className={buttonClass}>Tools Library</button></li>
-                                <li><button onClick={() => handleNavClick('my_tool_requests')} className={buttonClass}>My Tool Requests</button></li>
+                                <li><button onClick={() => handleNavClick('order_history')} className={buttonClass}>History</button></li>
+                                <li><button onClick={() => handleNavClick('tools')} className={buttonClass}>Tools</button></li>
+                                <li><button onClick={() => handleNavClick('my_tool_requests')} className={buttonClass}>My Requests</button></li>
                             </>
                         )}
                         {(user.role === 'warehouse' || user.role === 'admin') && (
                             <>
-                                <li><button onClick={() => handleNavClick('order_management')} className={flexButtonClass}><span>Order Management</span>{newOrderCount > 0 && <span className="ml-2 bg-red-500 text-white text-xs rounded-full h-5 w-5 flex items-center justify-center">{newOrderCount}</span>}</button></li>
-                                <li><button onClick={() => handleNavClick('tool_requests')} className={flexButtonClass}><span>Tool Requests</span>{newToolRequestCount > 0 && <span className="ml-2 bg-red-500 text-white text-xs rounded-full h-5 w-5 flex items-center justify-center">{newToolRequestCount}</span>}</button></li>
+                                <li>
+                                    <button onClick={() => handleNavClick('order_management')} className={flexButtonClass}>
+                                        <span>Order Mgmt</span>
+                                        {newOrderCount > 0 && <span className="bg-red-500 text-white text-xs rounded-full h-5 w-5 flex items-center justify-center">{newOrderCount}</span>}
+                                    </button>
+                                </li>
+                                <li>
+                                    <button onClick={() => handleNavClick('tool_requests')} className={flexButtonClass}>
+                                        <span>Tool Requests</span>
+                                        {newToolRequestCount > 0 && <span className="ml-2 bg-red-500 text-white text-xs rounded-full h-5 w-5 flex items-center justify-center">{newToolRequestCount}</span>}
+                                    </button>
+                                </li>
                             </>
                         )}
                         {user.role === 'admin' && (
                             <>
-                                <li><button onClick={() => handleNavClick('user_management')} className={buttonClass}>User Management</button></li>
-                                <li><button onClick={() => handleNavClick('tools_management')} className={buttonClass}>Tools Management</button></li>
+                                <li><button onClick={() => handleNavClick('user_management')} className={buttonClass}>User Mgmt</button></li>
+                                <li><button onClick={() => handleNavClick('tools_management')} className={buttonClass}>Tools Mgmt</button></li>
                                 <li><button onClick={() => handleNavClick('forecasting')} className={buttonClass}>Forecasting</button></li>
                             </>
                         )}
@@ -389,37 +402,13 @@
 
             return (
                 <nav className="bg-gray-800">
-                    <div className="max-w-7xl mx-auto px-2 sm:px-6 lg:px-8">
-                        <div className="relative flex items-center justify-between h-16">
-                            {/* Mobile menu button */}
-                            <div className="absolute inset-y-0 left-0 flex items-center sm:hidden">
-                                <button onClick={() => setIsMenuOpen(!isMenuOpen)} type="button" className="inline-flex items-center justify-center p-2 rounded-md text-gray-400 hover:text-white hover:bg-gray-700 focus:outline-none focus:ring-2 focus:ring-inset focus:ring-white" aria-controls="mobile-menu" aria-expanded="false">
-                                    <span className="sr-only">Open main menu</span>
-                                    {isMenuOpen ? (
-                                        <svg className="block h-6 w-6" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" /></svg>
-                                    ) : (
-                                        <svg className="block h-6 w-6" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 6h16M4 12h16M4 18h16" /></svg>
-                                    )}
-                                </button>
-                            </div>
-                            {/* Desktop Menu */}
-                            <div className="flex-1 flex items-center justify-center sm:items-stretch sm:justify-start">
-                                <div className="hidden sm:block sm:ml-6">
-                                    <ul className="flex space-x-4">
-                                        <NavLinks />
-                                    </ul>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                    {/* Mobile menu */}
-                    {isMenuOpen && (
-                        <div className="sm:hidden" id="mobile-menu">
-                            <ul className="px-2 pt-2 pb-3 space-y-1">
-                                <NavLinks mobile={true} />
+                    <div className="w-full overflow-x-auto no-scrollbar">
+                        <div className="px-4">
+                            <ul className="flex items-center space-x-2 h-16">
+                                <NavLinks />
                             </ul>
                         </div>
-                    )}
+                    </div>
                 </nav>
             );
         };
@@ -1726,8 +1715,10 @@
 
             return (
                 <div className="min-h-screen bg-gray-100">
-                    <Header />
-                    <Nav setCurrentPage={setCurrentPage} />
+                    <div className="sticky top-0 z-50 bg-white shadow-md">
+                        <Header />
+                        <Nav setCurrentPage={setCurrentPage} />
+                    </div>
                     <main>
                         {renderPage()}
                     </main>

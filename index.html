@@ -161,17 +161,12 @@
                         const primaryApp = window.initializeApp(primaryFirebaseConfig, "primary");
                         const primaryDb = window.getFirestore(primaryApp);
                         
-                        // Enable offline persistence
                         try {
                            await window.enableIndexedDbPersistence(primaryDb);
-                           showToast("Offline capability enabled.", "success");
                         } catch (err) {
                              if (err.code == 'failed-precondition') {
-                                // Multiple tabs open, persistence can only be enabled in one.
                                 console.warn("Firestore offline persistence failed: multiple tabs open.");
                              } else if (err.code == 'unimplemented') {
-                                // The current browser does not support all of the
-                                // features required to enable persistence
                                 console.error("Firestore offline persistence not available in this browser.");
                              }
                         }
@@ -245,7 +240,7 @@
             };
             
             useEffect(() => {
-                if (isUsersLoading) return; // Wait for users to be loaded
+                if (isUsersLoading) return;
 
                 try {
                     const savedUserJSON = localStorage.getItem('dlv_user');
@@ -331,12 +326,9 @@
         const Header = () => {
             const { user, logout } = useAppContext();
             return (
-                // SHRINK HEADER: Reduced padding on mobile (p-2), increased on larger screens (sm:p-4)
                 <header className="bg-white p-2 sm:p-4 flex justify-between items-center">
-                    {/* SHRINK HEADER: Reduced logo size on mobile (h-8), increased on larger screens (sm:h-10) */}
                     <img src="https://i.imgur.com/pmh9SN0.png" alt="DLV Order Hub Logo" className="h-8 sm:h-10" />
                     {user && (
-                        // SHRINK HEADER: Stacked user info vertically on mobile, horizontally on larger screens
                         <div className="flex flex-col sm:flex-row items-end sm:items-center sm:space-x-4">
                             <span className="text-gray-600 text-right text-sm sm:text-base">Welcome, <span className="font-semibold">{user.username}</span> ({user.role})</span>
                             <div className="flex space-x-2 mt-1 sm:mt-0">
@@ -528,11 +520,10 @@
             return (
                 <div className="p-4 sm:p-6 lg:p-8">
                     <h2 className="text-3xl font-bold mb-6">Inventory</h2>
-                    {/* STICKY SEARCH BAR: Wrapped input in a sticky container */}
-                    <div className="sticky top-0 bg-gray-100 py-4 z-10">
+                    {/* STICKY SEARCH BAR: Corrected top offset to account for header height */}
+                    <div className="sticky top-[7rem] sm:top-[8.5rem] bg-gray-100 py-4 z-10">
                          <input type="text" placeholder="Search inventory..." className="w-full p-3 border rounded-lg shadow-sm uppercase" value={searchTerm} onChange={e => setSearchTerm(e.target.value.toUpperCase())} />
                     </div>
-                    {/* TWO ITEMS PER ROW: Changed grid-cols-1 to grid-cols-2 for mobile */}
                     <div className="grid grid-cols-2 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4 sm:gap-6 mt-4">
                         {filteredInventory.map((item) => (
                             <div key={item.id} className="bg-white rounded-lg shadow-lg overflow-hidden flex flex-col">
@@ -1572,7 +1563,7 @@
                         const ninetyDaysAgo = new Date();
                         ninetyDaysAgo.setDate(ninetyDaysAgo.getDate() - 90);
                         const q = query(ordersCol, where("createdAt", ">=", ninetyDaysAgo));
-                        const ordersSnapshot = await getDocs(q);
+                        const ordersSnapshot = await window.getDocs(q);
                         const ordersData = ordersSnapshot.docs.map(doc => doc.data());
                         setOrders(ordersData);
                     } catch (error) {

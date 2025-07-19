@@ -520,8 +520,7 @@
             return (
                 <div className="p-4 sm:p-6 lg:p-8">
                     <h2 className="text-3xl font-bold mb-6">Inventory</h2>
-                    {/* STICKY SEARCH BAR: Corrected top offset to account for header height */}
-                    <div className="sticky top-[7rem] sm:top-[8.5rem] bg-gray-100 py-4 z-10">
+                    <div className="sticky top-0 bg-gray-100 py-4 z-10">
                          <input type="text" placeholder="Search inventory..." className="w-full p-3 border rounded-lg shadow-sm uppercase" value={searchTerm} onChange={e => setSearchTerm(e.target.value.toUpperCase())} />
                     </div>
                     <div className="grid grid-cols-2 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4 sm:gap-6 mt-4">
@@ -1710,12 +1709,13 @@
             };
 
             return (
-                <div className="min-h-screen bg-gray-100">
-                    <div className="sticky top-0 z-50 bg-white shadow-md">
+                //  STICKY SEARCH FIX: Changed layout to use flexbox for proper scrolling behavior
+                <div className="h-screen bg-gray-100 flex flex-col">
+                    <div className="flex-shrink-0 z-50 bg-white shadow-md">
                         <Header />
                         <Nav setCurrentPage={setCurrentPage} />
                     </div>
-                    <main>
+                    <main className="flex-grow overflow-y-auto">
                         {renderPage()}
                     </main>
                 </div>

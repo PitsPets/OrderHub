@@ -146,14 +146,13 @@
         const AppProvider = ({ children }) => {
             const [user, setUser] = useState(null);
             const [loading, setLoading] = useState(true);
-            const [modal, setModal] = useState({ isOpen: false, message: '', onConfirm: null });
+            const [modal, setModal] = useState({ isOpen: false, message: '', onConfirm: null, onCancel: null, confirmText: 'OK', cancelText: 'Cancel' });
             const [toast, setToast] = useState({ show: false, message: '', type: 'success' });
             const [firebaseInstances, setFirebaseInstances] = useState(null);
             const [newOrderCount, setNewOrderCount] = useState(0);
             const [newToolRequestCount, setNewToolRequestCount] = useState(0);
             const [users, setUsers] = useState([]);
             const [isUsersLoading, setIsUsersLoading] = useState(true);
-
 
             useEffect(() => {
                 const initializeFirebase = async () => {
@@ -191,7 +190,7 @@
                 if (!firebaseInstances) return;
                 setIsUsersLoading(true);
                 const usersCol = window.collection(firebaseInstances.primaryDb, '/public/data/users');
-                const unsubscribe = window.onSnapshot(usersCol, (snapshot) => {
+                const unsubscribeUsers = window.onSnapshot(usersCol, (snapshot) => {
                     const usersData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
                     setUsers(usersData);
                     setIsUsersLoading(false);
@@ -213,7 +212,10 @@
                     showModal("Could not load user accounts from the database.");
                     setIsUsersLoading(false);
                 });
-                return () => unsubscribe();
+
+                return () => {
+                    unsubscribeUsers();
+                };
             }, [firebaseInstances]);
 
             useEffect(() => {
@@ -262,8 +264,29 @@
                 }
             }, [users, isUsersLoading]);
 
-            const showModal = (message, onConfirm = null) => setModal({ isOpen: true, message, onConfirm });
-            const closeModal = () => setModal({ isOpen: false, message: '', onConfirm: null });
+            const showModal = (optionsOrMessage, onConfirmCallback = null) => {
+                if (typeof optionsOrMessage === 'string') {
+                    setModal({
+                        isOpen: true,
+                        message: optionsOrMessage,
+                        onConfirm: onConfirmCallback,
+                        onCancel: onConfirmCallback ? () => {} : null,
+                        confirmText: 'OK',
+                        cancelText: 'Cancel'
+                    });
+                } else {
+                    setModal({
+                        isOpen: true,
+                        message: optionsOrMessage.message || '',
+                        onConfirm: optionsOrMessage.onConfirm || null,
+                        onCancel: optionsOrMessage.onCancel || null,
+                        confirmText: optionsOrMessage.confirmText || 'OK',
+                        cancelText: optionsOrMessage.cancelText || 'Cancel'
+                    });
+                }
+            };
+
+            const closeModal = () => setModal({ isOpen: false, message: '', onConfirm: null, onCancel: null, confirmText: 'OK', cancelText: 'Cancel' });
 
             const showToast = (message, type = 'success') => {
                 setToast({ show: true, message, type });
@@ -292,17 +315,47 @@
         const Modal = () => {
             const { modal, closeModal } = useAppContext();
             if (!modal.isOpen) return null;
+
             const handleConfirm = () => {
                 if (modal.onConfirm) modal.onConfirm();
                 closeModal();
             };
+
+            const handleCancel = () => {
+                if (modal.onCancel) modal.onCancel();
+                closeModal();
+            };
+
+            if (!modal.onConfirm && !modal.onCancel) {
+                 return (
+                    <div className="modal-overlay">
+                        <div className="modal-content text-center">
+                            <p className="mb-6 text-lg">{modal.message}</p>
+                            <div className="flex justify-center">
+                                <button onClick={closeModal} className="px-6 py-2 rounded-md bg-blue-600 text-white hover:bg-blue-700">
+                                    {modal.confirmText || 'OK'}
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                );
+            }
+
             return (
                 <div className="modal-overlay">
                     <div className="modal-content text-center">
                         <p className="mb-6 text-lg">{modal.message}</p>
                         <div className="flex justify-center space-x-4">
-                            {modal.onConfirm && <button onClick={closeModal} className="px-6 py-2 rounded-md bg-gray-200 text-gray-800 hover:bg-gray-300">Cancel</button>}
-                            <button onClick={handleConfirm} className="px-6 py-2 rounded-md bg-blue-600 text-white hover:bg-blue-700">OK</button>
+                            {modal.onCancel && (
+                                 <button onClick={handleCancel} className="px-6 py-2 rounded-md bg-gray-200 text-gray-800 hover:bg-gray-300">
+                                    {modal.cancelText}
+                                </button>
+                            )}
+                            {modal.onConfirm && (
+                                <button onClick={handleConfirm} className="px-6 py-2 rounded-md bg-blue-600 text-white hover:bg-blue-700">
+                                    {modal.confirmText}
+                                </button>
+                            )}
                         </div>
                     </div>
                 </div>
@@ -447,12 +500,12 @@
             );
         };
         
-        const InventoryPage = () => {
+        const InventoryPage = ({ setCurrentPage }) => {
             const { user, firebaseInstances, showModal, showToast } = useAppContext();
             const [inventory, setInventory] = useState([]);
             const [loading, setLoading] = useState(true);
             const [searchTerm, setSearchTerm] = useState("");
-            const [customImages, setCustomImages] = useState({});
+            const [overrides, setOverrides] = useState({});
             const [cart, setCart] = useState(() => {
                 try {
                     const savedCart = localStorage.getItem('dlv_cart');
@@ -467,13 +520,20 @@
                     try {
                         const inventoryCol = window.collection(firebaseInstances.secondaryDb, '/artifacts/default-app-id/public/data/inventory');
                         const inventorySnapshot = await window.getDocs(inventoryCol);
-                        setInventory(inventorySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+                        const inventoryData = inventorySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+                        inventoryData.sort((a, b) => a.name.localeCompare(b.name));
+                        setInventory(inventoryData);
 
-                        const imagesCol = window.collection(firebaseInstances.primaryDb, '/public/data/inventory_overrides');
-                        const imagesSnapshot = await window.getDocs(imagesCol);
-                        const imageMap = {};
-                        imagesSnapshot.forEach(doc => { imageMap[doc.id] = doc.data().imageUrl; });
-                        setCustomImages(imageMap);
+                        const overridesCol = window.collection(firebaseInstances.primaryDb, '/public/data/inventory_overrides');
+                        const unsubscribe = onSnapshot(overridesCol, (snapshot) => {
+                            const overridesData = {};
+                            snapshot.forEach(doc => {
+                                overridesData[doc.id] = doc.data();
+                            });
+                            setOverrides(overridesData);
+                        });
+                        return unsubscribe;
+
                     } catch (error) {
                         console.error("Error fetching inventory:", error);
                         showModal("Failed to load inventory data.");
@@ -492,7 +552,13 @@
                     const existingItem = prevCart[item.id];
                     return { ...prevCart, [item.id]: { ...item, quantity: (existingItem ? existingItem.quantity : 0) + quantity }};
                 });
-                showToast(`${quantity} x ${item.name} added to cart.`, 'success');
+                showModal({
+                    message: `${quantity} x ${item.name} added to cart!`,
+                    confirmText: 'Go to Cart',
+                    onConfirm: () => setCurrentPage('cart'),
+                    cancelText: 'Continue Shopping',
+                    onCancel: () => {}
+                });
             };
 
             const handleAddPicture = async (itemId) => {
@@ -500,8 +566,7 @@
                 if (imageUrl) {
                     try {
                         const docRef = window.doc(firebaseInstances.primaryDb, `/public/data/inventory_overrides/${itemId}`);
-                        await window.setDoc(docRef, { imageUrl });
-                        setCustomImages(prev => ({...prev, [itemId]: imageUrl}));
+                        await window.setDoc(docRef, { imageUrl }, { merge: true });
                         showToast("Custom image updated!", 'success');
                     } catch (error) {
                         console.error("Error updating image URL:", error);
@@ -509,11 +574,27 @@
                     }
                 }
             };
+
+            const handleToggleVisibility = async (item) => {
+                const docRef = window.doc(firebaseInstances.primaryDb, `/public/data/inventory_overrides/${item.id}`);
+                const currentVisibility = overrides[item.id]?.visible !== false;
+                try {
+                    await window.setDoc(docRef, { visible: !currentVisibility }, { merge: true });
+                } catch (error) {
+                    console.error("Error toggling visibility:", error);
+                    showToast("Failed to update visibility.", 'error');
+                }
+            };
             
-            const filteredInventory = inventory.filter(item => 
-                (item.name && item.name.toLowerCase().includes(searchTerm.toLowerCase())) ||
-                (item.description && item.description.toLowerCase().includes(searchTerm.toLowerCase()))
-            );
+            const filteredInventory = inventory
+                .filter(item => {
+                    if (user.role === 'admin') return true;
+                    return overrides[item.id]?.visible !== false;
+                })
+                .filter(item => 
+                    (item.name && item.name.toLowerCase().includes(searchTerm.toLowerCase())) ||
+                    (item.description && item.description.toLowerCase().includes(searchTerm.toLowerCase()))
+                );
 
             if (loading) return <LoadingSpinner message="Loading Inventory..." />;
 
@@ -524,9 +605,11 @@
                          <input type="text" placeholder="Search inventory..." className="w-full p-3 border rounded-lg shadow-sm uppercase" value={searchTerm} onChange={e => setSearchTerm(e.target.value.toUpperCase())} />
                     </div>
                     <div className="grid grid-cols-2 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4 sm:gap-6 mt-4">
-                        {filteredInventory.map((item) => (
-                            <div key={item.id} className="bg-white rounded-lg shadow-lg overflow-hidden flex flex-col">
-                                <img src={customImages[item.id] || 'https://placehold.co/400x300/e2e8f0/cbd5e0?text=No+Image'} alt={item.name} className="w-full h-32 sm:h-48 object-cover" onError={(e) => { e.target.onerror = null; e.target.src='https://placehold.co/400x300/e2e8f0/cbd5e0?text=Image+Error'; }} />
+                        {filteredInventory.map((item) => {
+                            const isVisible = overrides[item.id]?.visible !== false;
+                            return (
+                            <div key={item.id} className={`bg-white rounded-lg shadow-lg overflow-hidden flex flex-col ${!isVisible && user.role === 'admin' ? 'opacity-50' : ''}`}>
+                                <img src={overrides[item.id]?.imageUrl || 'https://placehold.co/400x300/e2e8f0/cbd5e0?text=No+Image'} alt={item.name} className="w-full h-32 sm:h-48 object-cover" onError={(e) => { e.target.onerror = null; e.target.src='https://placehold.co/400x300/e2e8f0/cbd5e0?text=Image+Error'; }} />
                                 <div className="p-2 sm:p-4 flex flex-col flex-grow">
                                     <h3 className="text-base sm:text-xl font-bold">{item.name}</h3>
                                     <p className="text-gray-600 text-xs sm:text-base mt-2 flex-grow">{item.description}</p>
@@ -535,11 +618,21 @@
                                             <input type="number" name="quantity" defaultValue="1" min="1" className="w-12 sm:w-16 p-2 border rounded" />
                                             <button type="submit" className="flex-1 bg-blue-600 text-white p-2 rounded hover:bg-blue-700 text-sm">Add</button>
                                         </form>
-                                        {user.role === 'admin' && <button onClick={() => handleAddPicture(item.id)} className="w-full mt-2 bg-yellow-500 text-white p-2 rounded hover:bg-yellow-600 text-sm">Picture</button>}
+                                        {user.role === 'admin' && (
+                                            <div className="mt-2 space-y-2">
+                                                <button onClick={() => handleAddPicture(item.id)} className="w-full bg-yellow-500 text-white p-2 rounded hover:bg-yellow-600 text-sm">Picture</button>
+                                                <div className="flex items-center justify-center">
+                                                    <span className="text-sm mr-2">{isVisible ? 'Visible' : 'Hidden'}</span>
+                                                    <button onClick={() => handleToggleVisibility(item)} className={`relative inline-flex flex-shrink-0 h-6 w-11 border-2 border-transparent rounded-full cursor-pointer transition-colors ease-in-out duration-200 focus:outline-none ${isVisible ? 'bg-blue-600' : 'bg-gray-200'}`}>
+                                                        <span aria-hidden="true" className={`inline-block h-5 w-5 rounded-full bg-white shadow transform ring-0 transition ease-in-out duration-200 ${isVisible ? 'translate-x-5' : 'translate-x-0'}`} />
+                                                    </button>
+                                                </div>
+                                            </div>
+                                        )}
                                     </div>
                                 </div>
                             </div>
-                        ))}
+                        )})}
                     </div>
                 </div>
             );
@@ -1541,8 +1634,8 @@
             );
         };
         
-        const ForecastingPage = () => {
-            const { firebaseInstances, showModal, showToast } = useAppContext();
+        const ForecastingPage = ({ setCurrentPage }) => {
+            const { firebaseInstances, showModal } = useAppContext();
             const [inventory, setInventory] = useState([]);
             const [orders, setOrders] = useState([]);
             const [loading, setLoading] = useState(true);
@@ -1604,7 +1697,13 @@
                 const existingItem = savedCart[item.id];
                 const newCart = { ...savedCart, [item.id]: { ...item, quantity: (existingItem ? existingItem.quantity : 0) + quantity }};
                 localStorage.setItem('dlv_cart', JSON.stringify(newCart));
-                showToast(`${quantity} x ${item.name} added to cart.`, 'success');
+                showModal({
+                    message: `${quantity} x ${item.name} added to cart!`,
+                    confirmText: 'Go to Cart',
+                    onConfirm: () => setCurrentPage('cart'),
+                    cancelText: 'Continue Shopping',
+                    onCancel: () => {}
+                });
             };
 
             if (loading) return <LoadingSpinner message="Analyzing Order Data..." />;
@@ -1654,7 +1753,6 @@
             );
         };
 
-
         const App = () => {
             const { user, loading, firebaseInstances, setNewOrderCount, setNewToolRequestCount } = useAppContext();
             const [currentPage, setCurrentPage] = useState('inventory');
@@ -1694,7 +1792,7 @@
 
             const renderPage = () => {
                 switch (currentPage) {
-                    case 'inventory': return <InventoryPage />;
+                    case 'inventory': return <InventoryPage setCurrentPage={setCurrentPage} />;
                     case 'cart': return <CartPage setCurrentPage={setCurrentPage} />;
                     case 'order_history': return <OrderHistoryPage />;
                     case 'order_management': return <OrderManagementPage />;
@@ -1703,13 +1801,12 @@
                     case 'tools_management': return <ToolsManagementPage />;
                     case 'tool_requests': return <ToolRequestsPage />;
                     case 'my_tool_requests': return <MyToolRequestsPage />;
-                    case 'forecasting': return <ForecastingPage />;
-                    default: return <InventoryPage />;
+                    case 'forecasting': return <ForecastingPage setCurrentPage={setCurrentPage} />;
+                    default: return <InventoryPage setCurrentPage={setCurrentPage} />;
                 }
             };
 
             return (
-                //  STICKY SEARCH FIX: Changed layout to use flexbox for proper scrolling behavior
                 <div className="h-screen bg-gray-100 flex flex-col">
                     <div className="flex-shrink-0 z-50 bg-white shadow-md">
                         <Header />
